@@ -29,6 +29,26 @@ python print_raw.py test-printer "真实小票机名称"
 
 ## 3. Capture And Forward
 
+图形界面版本：
+
+```powershell
+python app_gui.py
+```
+
+界面里可以启动/停止转发、选择目标打印机、发送测试小票、查看抓包路径、转发计数、实时日志和最新解析文本。
+
+现场使用可以直接自动启动转发：
+
+```powershell
+.\run_gui.ps1
+```
+
+或者指定真实小票机：
+
+```powershell
+.\run_gui.ps1 -TargetPrinter "GP-5850II"
+```
+
 创建一个 Windows 代理打印机，让其他软件可以选择它打印：
 
 ```powershell
