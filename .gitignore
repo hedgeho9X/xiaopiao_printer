@@ -5,4 +5,4 @@ __pycache__/
 captures/*.bin
 captures/*.preview.png
 !captures/.gitkeep
-
+logs/
