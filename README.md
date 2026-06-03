@@ -29,6 +29,18 @@ python print_raw.py test-printer "真实小票机名称"
 
 ## 3. Capture And Forward
 
+创建一个 Windows 代理打印机，让其他软件可以选择它打印：
+
+```powershell
+.\setup_proxy_printer.ps1
+```
+
+默认会创建：
+
+```text
+Receipt Voice Proxy -> 127.0.0.1:9100
+```
+
 启动中间件：
 
 ```powershell
@@ -39,6 +51,12 @@ python capture_server.py --printer "真实小票机名称"
 
 ```powershell
 python print_raw.py test-tcp 127.0.0.1 9100
+```
+
+或者模拟真实软件打印到代理打印机：
+
+```powershell
+python print_raw.py test-printer "Receipt Voice Proxy"
 ```
 
 没有小票机时，可以只验证抓包落盘：
@@ -59,4 +77,3 @@ python inspect_capture.py captures\某个文件.bin
 ```text
 captures\某个文件.preview.png
 ```
-
