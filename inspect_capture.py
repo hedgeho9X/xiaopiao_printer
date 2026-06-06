@@ -25,6 +25,21 @@ class ParsedCapture:
     markers: list[str]
     text: str
     preview_lines: list[str]
+    bitmap_count: int
+    bitmap_images: list[dict]
+    content_kind: str
+
+
+@dataclass
+class RasterImage:
+    width_bytes: int
+    height: int
+    mode: int
+    data: bytes
+
+    @property
+    def width_pixels(self) -> int:
+        return self.width_bytes * 8
 
 
 def hex_summary(data: bytes, limit: int = 256) -> str:
@@ -109,6 +124,34 @@ def normalize_text(text: str) -> str:
     return "\n".join(line for line in lines if line.strip())
 
 
+def is_noise_text(text: str) -> bool:
+    if not text:
+        return True
+    if "\ufffd" in text:
+        return True
+    meaningful = sum(1 for char in text if char.isalnum() or "\u4e00" <= char <= "\u9fff")
+    return meaningful < max(2, len(text) // 5)
+
+
+def extract_raster_images(data: bytes) -> list[RasterImage]:
+    images: list[RasterImage] = []
+    i = 0
+    while i < len(data):
+        if data.startswith(b"\x1dv0", i) and i + 7 < len(data):
+            mode = data[i + 3]
+            width_bytes = data[i + 4] + data[i + 5] * 256
+            height = data[i + 6] + data[i + 7] * 256
+            size = width_bytes * height
+            start = i + 8
+            end = start + size
+            if width_bytes > 0 and height > 0 and end <= len(data):
+                images.append(RasterImage(width_bytes, height, mode, data[start:end]))
+                i = end
+                continue
+        i += 1
+    return images
+
+
 def parse_markers(data: bytes) -> list[str]:
     markers: list[str] = []
     i = 0
@@ -150,6 +193,17 @@ def parse_markers(data: bytes) -> list[str]:
 def parse_capture(data: bytes) -> tuple[str, ParsedCapture]:
     encoding, text = decode_text(data)
     markers = parse_markers(data)
+    raster_images = extract_raster_images(data)
+    if raster_images and is_noise_text(text):
+        text = ""
+
+    if raster_images and text:
+        content_kind = "mixed"
+    elif raster_images:
+        content_kind = "bitmap"
+    else:
+        content_kind = "text"
+
     preview_lines = []
 
     for marker in markers:
@@ -157,7 +211,24 @@ def parse_capture(data: bytes) -> tuple[str, ParsedCapture]:
             preview_lines.append(marker)
 
     preview_lines.extend(text.splitlines() if text else ["[NO READABLE TEXT]"])
-    return encoding, ParsedCapture(markers=markers, text=text, preview_lines=preview_lines)
+    bitmap_images = [
+        {
+            "width_pixels": image.width_pixels,
+            "width_bytes": image.width_bytes,
+            "height": image.height,
+            "mode": image.mode,
+            "byte_count": len(image.data),
+        }
+        for image in raster_images
+    ]
+    return encoding, ParsedCapture(
+        markers=markers,
+        text=text,
+        preview_lines=preview_lines,
+        bitmap_count=len(raster_images),
+        bitmap_images=bitmap_images,
+        content_kind=content_kind,
+    )
 
 
 def find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -195,6 +266,40 @@ def make_preview(lines: list[str], output_path: Path) -> None:
     image.save(output_path)
 
 
+def raster_to_image(raster: RasterImage) -> Image.Image:
+    image = Image.new("1", (raster.width_pixels, raster.height), 1)
+    pixels = image.load()
+    for y in range(raster.height):
+        row_start = y * raster.width_bytes
+        for byte_index in range(raster.width_bytes):
+            value = raster.data[row_start + byte_index]
+            for bit in range(8):
+                x = byte_index * 8 + bit
+                pixels[x, y] = 0 if value & (0x80 >> bit) else 1
+    return image.convert("RGB")
+
+
+def make_capture_preview(data: bytes, lines: list[str], output_path: Path) -> None:
+    rasters = extract_raster_images(data)
+    if not rasters:
+        make_preview(lines, output_path)
+        return
+
+    padding = 24
+    gap = 0
+    rendered = [raster_to_image(raster) for raster in rasters]
+    width = max(576, max(image.width for image in rendered) + padding * 2)
+    height = padding * 2 + sum(image.height + gap for image in rendered)
+    canvas = Image.new("RGB", (width, max(180, height)), "white")
+
+    y = padding
+    for image in rendered:
+        canvas.paste(image, (padding, y))
+        y += image.height + gap
+
+    canvas.save(output_path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inspect captured ESC/POS bytes.")
     parser.add_argument("capture", type=Path, help="Path to a .bin capture file.")
@@ -203,7 +308,7 @@ def main() -> int:
     data = args.capture.read_bytes()
     encoding, parsed = parse_capture(data)
     preview_path = args.capture.with_suffix(".preview.png")
-    make_preview(parsed.preview_lines, preview_path)
+    make_capture_preview(data, parsed.preview_lines, preview_path)
 
     print(f"File: {args.capture}")
     print(f"Size: {len(data)} bytes")
@@ -211,6 +316,8 @@ def main() -> int:
     print(hex_summary(data))
     print(f"\nDecoded text ({encoding}):")
     print(parsed.text or "[NO READABLE TEXT]")
+    print(f"\nContent kind: {parsed.content_kind}")
+    print(f"Bitmap images: {parsed.bitmap_count}")
     print("\nESC/POS markers:")
     if parsed.markers:
         for marker in parsed.markers:
@@ -223,4 +330,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
