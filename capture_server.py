@@ -1,10 +1,17 @@
 import argparse
 import datetime as dt
 import socket
+import sys
 from pathlib import Path
 
 
-CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
+def app_base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+CAPTURE_DIR = app_base_dir() / "captures"
 
 
 def require_win32print():
@@ -111,4 +118,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

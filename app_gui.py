@@ -1,12 +1,17 @@
 import argparse
+import datetime as dt
+import json
+import os
 import queue
 import socket
+import subprocess
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, scrolledtext, ttk
 
-from capture_server import save_capture, send_raw_to_printer
+from capture_server import CAPTURE_DIR, save_capture, send_raw_to_printer
 from inspect_capture import make_preview, parse_capture
 from print_raw import sample_receipt_bytes, send_raw_to_printer as print_to_queue
 
@@ -15,6 +20,46 @@ HOST = "127.0.0.1"
 PORT = 9100
 DEFAULT_PROXY_PRINTER = "Receipt Voice Proxy"
 DEFAULT_TARGET_PRINTER = "GP-5850II"
+VIRTUAL_PRINTER_KEYWORDS = ("pdf", "wps", "onenote", "xps", "fax", "microsoft print")
+RECEIPT_PRINTER_KEYWORDS = ("gp", "pos", "58", "80", "thermal", "receipt", "esc", "cla", "tech")
+
+
+def ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def create_or_fix_proxy_printer(proxy_name: str, target_printer: str) -> str:
+    script = f"""
+$ProxyPrinterName = {ps_quote(proxy_name)}
+$TargetPrinterName = {ps_quote(target_printer)}
+$PortName = 'IP_127.0.0.1'
+$Target = Get-Printer -Name $TargetPrinterName -ErrorAction Stop
+$DriverName = $Target.DriverName
+
+if (-not (Get-PrinterPort -Name $PortName -ErrorAction SilentlyContinue)) {{
+    Add-PrinterPort -Name $PortName -PrinterHostAddress '127.0.0.1' -PortNumber 9100
+}}
+
+$Existing = Get-Printer -Name $ProxyPrinterName -ErrorAction SilentlyContinue
+if ($Existing) {{
+    Set-Printer -Name $ProxyPrinterName -PortName $PortName
+}} else {{
+    Add-Printer -Name $ProxyPrinterName -DriverName $DriverName -PortName $PortName
+}}
+
+Get-Printer -Name $ProxyPrinterName |
+    Select-Object Name,DriverName,PortName,PrinterStatus |
+    ConvertTo-Json -Compress
+"""
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "PowerShell failed").strip())
+    return result.stdout.strip()
 
 
 class Forwarder:
@@ -99,6 +144,14 @@ class Forwarder:
 
     def _handle_data(self, address: tuple[str, int], data: bytes) -> None:
         capture_path = save_capture(data)
+        json_path = capture_path.with_suffix(".json")
+        preview_path: Path | None = None
+        encoding = None
+        parsed_text = ""
+        markers: list[str] = []
+        forward_ok = False
+        forward_error = None
+
         self.event_queue.put(
             {
                 "type": "capture",
@@ -110,6 +163,8 @@ class Forwarder:
 
         try:
             encoding, parsed = parse_capture(data)
+            parsed_text = parsed.text
+            markers = parsed.markers
             preview_path = capture_path.with_suffix(".preview.png")
             make_preview(parsed.preview_lines, preview_path)
             self.event_queue.put(
@@ -126,6 +181,7 @@ class Forwarder:
 
         try:
             send_raw_to_printer(self.target_printer, data)
+            forward_ok = True
             self.event_queue.put(
                 {
                     "type": "forwarded",
@@ -134,7 +190,25 @@ class Forwarder:
                 }
             )
         except Exception as exc:
+            forward_error = str(exc)
             self.event_queue.put({"type": "failed", "message": str(exc)})
+
+        metadata = {
+            "captured_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "source": f"{address[0]}:{address[1]}",
+            "byte_count": len(data),
+            "raw_bin_path": str(capture_path),
+            "json_path": str(json_path),
+            "preview_path": str(preview_path) if preview_path else None,
+            "target_printer": self.target_printer,
+            "forwarded": forward_ok,
+            "forward_error": forward_error,
+            "decoded_encoding": encoding,
+            "parsed_text": parsed_text,
+            "escpos_markers": markers,
+        }
+        json_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.event_queue.put({"type": "json", "path": str(json_path)})
 
 
 class App(tk.Tk):
@@ -181,7 +255,18 @@ class App(tk.Tk):
         if DEFAULT_TARGET_PRINTER in self.printer_names:
             return DEFAULT_TARGET_PRINTER
         for name in self.printer_names:
-            if name != DEFAULT_PROXY_PRINTER:
+            lowered = name.lower()
+            if name == DEFAULT_PROXY_PRINTER:
+                continue
+            if any(keyword in lowered for keyword in VIRTUAL_PRINTER_KEYWORDS):
+                continue
+            if any(keyword in lowered for keyword in RECEIPT_PRINTER_KEYWORDS):
+                return name
+        for name in self.printer_names:
+            lowered = name.lower()
+            if name != DEFAULT_PROXY_PRINTER and not any(
+                keyword in lowered for keyword in VIRTUAL_PRINTER_KEYWORDS
+            ):
                 return name
         return ""
 
@@ -199,8 +284,10 @@ class App(tk.Tk):
         button_row.pack(side=tk.RIGHT)
         ttk.Button(button_row, text="Start", command=self.start_forwarder).pack(side=tk.LEFT, padx=4)
         ttk.Button(button_row, text="Stop", command=self.stop_forwarder).pack(side=tk.LEFT, padx=4)
+        ttk.Button(button_row, text="Create/Fix Proxy", command=self.create_proxy_printer).pack(side=tk.LEFT, padx=4)
         ttk.Button(button_row, text="Test Proxy Print", command=self.test_proxy_print).pack(side=tk.LEFT, padx=4)
         ttk.Button(button_row, text="Refresh Printers", command=self.refresh_printers).pack(side=tk.LEFT, padx=4)
+        ttk.Button(button_row, text="Open Captures", command=self.open_captures_folder).pack(side=tk.LEFT, padx=4)
 
         config = ttk.LabelFrame(root, text="Routing", padding=10)
         config.pack(fill=tk.X, pady=(12, 8))
@@ -255,11 +342,40 @@ class App(tk.Tk):
         if target == self.proxy_var.get().strip():
             messagebox.showerror("Invalid route", "Target printer cannot be the proxy printer.")
             return
+        if any(keyword in target.lower() for keyword in VIRTUAL_PRINTER_KEYWORDS):
+            messagebox.showerror(
+                "Invalid target",
+                "Target printer looks like a virtual printer. Choose the real receipt printer.",
+            )
+            return
         self.update_flow()
         self.forwarder.start(target)
 
     def stop_forwarder(self) -> None:
         self.forwarder.stop()
+
+    def create_proxy_printer(self) -> None:
+        proxy = self.proxy_var.get().strip()
+        target = self.target_var.get().strip()
+        if not proxy or not target:
+            messagebox.showerror("Missing printer", "Choose proxy and target printers first.")
+            return
+        if proxy == target:
+            messagebox.showerror("Invalid route", "Proxy printer cannot be the target printer.")
+            return
+
+        try:
+            result = create_or_fix_proxy_printer(proxy, target)
+            self.log(f"Proxy printer ready: {result}")
+            self.refresh_printers()
+            messagebox.showinfo("Proxy ready", f"{proxy} is ready.\nSelect it in Meituan/Yinbao.")
+        except Exception as exc:
+            self.log(f"Create/fix proxy failed: {exc}")
+            messagebox.showerror(
+                "Proxy setup failed",
+                "Could not create the proxy printer. Try running this app as administrator.\n\n"
+                + str(exc),
+            )
 
     def test_proxy_print(self) -> None:
         proxy = self.proxy_var.get().strip()
@@ -280,6 +396,11 @@ class App(tk.Tk):
             self.target_var.set(self.default_printer())
         self.log(f"Loaded {len(self.printer_names)} printer(s).")
         self.update_flow()
+
+    def open_captures_folder(self) -> None:
+        path = CAPTURE_DIR
+        path.mkdir(parents=True, exist_ok=True)
+        os.startfile(path)
 
     def update_flow(self) -> None:
         proxy = self.proxy_var.get().strip() or DEFAULT_PROXY_PRINTER
@@ -321,6 +442,8 @@ class App(tk.Tk):
             self.failed_count += 1
             self.log(f"Forward failed: {event['message']}")
             self.update_stats()
+        elif event_type == "json":
+            self.log(f"Saved debug JSON: {event['path']}")
 
     def update_stats(self) -> None:
         self.stats_var.set(

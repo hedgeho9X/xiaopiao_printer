@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 captures/*.bin
 captures/*.preview.png
+captures/*.json
 !captures/.gitkeep
 logs/
 build/
