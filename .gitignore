@@ -6,3 +6,6 @@ captures/*.bin
 captures/*.preview.png
 !captures/.gitkeep
 logs/
+build/
+dist/
+*.spec

@@ -97,3 +97,24 @@ python inspect_capture.py captures\某个文件.bin
 ```text
 captures\某个文件.preview.png
 ```
+
+## 5. Test Sender App
+
+给店员试用的发送器：
+
+```powershell
+python test_sender_app.py
+```
+
+打包成单个 exe：
+
+```powershell
+pip install pyinstaller
+.\build_test_sender.ps1
+```
+
+生成文件：
+
+```text
+dist\ReceiptTestSender.exe
+```
