@@ -4,6 +4,7 @@ import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from xml.etree import ElementTree
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -63,6 +64,64 @@ def list_zip_entries(data: bytes, limit: int = 50) -> list[str]:
             return archive.namelist()[:limit]
     except zipfile.BadZipFile:
         return []
+
+
+def extract_xps_text(data: bytes) -> str:
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            page_names = sorted(
+                name
+                for name in archive.namelist()
+                if name.lower().endswith(".fpage") or "/pages/" in name.lower()
+            )
+            glyphs: list[tuple[float, float, str]] = []
+            for page_name in page_names:
+                try:
+                    root = ElementTree.fromstring(archive.read(page_name))
+                except ElementTree.ParseError:
+                    continue
+                for element in root.iter():
+                    if element.tag.rsplit("}", 1)[-1] != "Glyphs":
+                        continue
+                    text = element.attrib.get("UnicodeString", "")
+                    if not text:
+                        continue
+                    try:
+                        x = float(element.attrib.get("OriginX", "0"))
+                        y = float(element.attrib.get("OriginY", "0"))
+                    except ValueError:
+                        x, y = 0.0, 0.0
+                    glyphs.append((y, x, text))
+    except zipfile.BadZipFile:
+        return ""
+
+    if not glyphs:
+        return ""
+
+    glyphs.sort(key=lambda item: (round(item[0] / 3) * 3, item[1]))
+    lines: list[list[tuple[float, str]]] = []
+    current_y: float | None = None
+    current_line: list[tuple[float, str]] = []
+    tolerance = 4.0
+
+    for y, x, text in glyphs:
+        if current_y is None or abs(y - current_y) <= tolerance:
+            current_line.append((x, text))
+            current_y = y if current_y is None else current_y
+        else:
+            lines.append(current_line)
+            current_line = [(x, text)]
+            current_y = y
+    if current_line:
+        lines.append(current_line)
+
+    rendered_lines: list[str] = []
+    for line in lines:
+        pieces = [text for _x, text in sorted(line, key=lambda item: item[0])]
+        rendered = "".join(pieces).strip()
+        if rendered:
+            rendered_lines.append(rendered)
+    return "\n".join(rendered_lines)
 
 
 def decode_text(data: bytes) -> tuple[str, str]:
@@ -211,21 +270,23 @@ def parse_markers(data: bytes) -> list[str]:
 def parse_capture(data: bytes) -> tuple[str, ParsedCapture]:
     if is_zip_package(data):
         entries = list_zip_entries(data)
+        xps_text = extract_xps_text(data)
         lines = [
-            "[文档包/疑似 XPS 打印数据]",
-            "这不是 ESC/POS 文本小票，原始 .bin 已完整保存。",
-            "请优先让收银软件选择 Receipt Voice Proxy，而不是系统测试页或 XPS/PDF 类打印路径。",
+            "[银豹/XPS 文档包打印数据]",
+            "原始 .bin 已完整保存，文字从 XPS Glyphs 中提取。",
         ]
+        if xps_text:
+            lines.extend(xps_text.splitlines())
         if entries:
             lines.append("包内文件：")
             lines.extend(entries[:12])
-        return "binary", ParsedCapture(
+        return "xps", ParsedCapture(
             markers=["[DOCUMENT PACKAGE: ZIP/XPS]"],
-            text="",
+            text=xps_text,
             preview_lines=lines,
             bitmap_count=0,
             bitmap_images=[],
-            content_kind="document_package",
+            content_kind="xps_document",
             package_entries=entries,
         )
 
