@@ -207,6 +207,7 @@ class Forwarder:
             "content_kind": parsed.content_kind if encoding else None,
             "bitmap_count": parsed.bitmap_count if encoding else 0,
             "bitmap_images": parsed.bitmap_images if encoding else [],
+            "package_entries": parsed.package_entries if encoding else [],
             "parsed_text": parsed_text,
             "escpos_markers": markers,
         }

@@ -1,6 +1,8 @@
 import argparse
 import re
+import zipfile
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -28,6 +30,7 @@ class ParsedCapture:
     bitmap_count: int
     bitmap_images: list[dict]
     content_kind: str
+    package_entries: list[str]
 
 
 @dataclass
@@ -48,6 +51,18 @@ def hex_summary(data: bytes, limit: int = 256) -> str:
     if len(data) > limit:
         hexed += f" ... ({len(data) - limit} more bytes)"
     return hexed
+
+
+def is_zip_package(data: bytes) -> bool:
+    return data.startswith(b"PK\x03\x04")
+
+
+def list_zip_entries(data: bytes, limit: int = 50) -> list[str]:
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            return archive.namelist()[:limit]
+    except zipfile.BadZipFile:
+        return []
 
 
 def decode_text(data: bytes) -> tuple[str, str]:
@@ -153,6 +168,9 @@ def extract_raster_images(data: bytes) -> list[RasterImage]:
 
 
 def parse_markers(data: bytes) -> list[str]:
+    if is_zip_package(data):
+        return ["[DOCUMENT PACKAGE: ZIP/XPS]"]
+
     markers: list[str] = []
     i = 0
     while i < len(data):
@@ -191,6 +209,26 @@ def parse_markers(data: bytes) -> list[str]:
 
 
 def parse_capture(data: bytes) -> tuple[str, ParsedCapture]:
+    if is_zip_package(data):
+        entries = list_zip_entries(data)
+        lines = [
+            "[文档包/疑似 XPS 打印数据]",
+            "这不是 ESC/POS 文本小票，原始 .bin 已完整保存。",
+            "请优先让收银软件选择 Receipt Voice Proxy，而不是系统测试页或 XPS/PDF 类打印路径。",
+        ]
+        if entries:
+            lines.append("包内文件：")
+            lines.extend(entries[:12])
+        return "binary", ParsedCapture(
+            markers=["[DOCUMENT PACKAGE: ZIP/XPS]"],
+            text="",
+            preview_lines=lines,
+            bitmap_count=0,
+            bitmap_images=[],
+            content_kind="document_package",
+            package_entries=entries,
+        )
+
     encoding, text = decode_text(data)
     markers = parse_markers(data)
     raster_images = extract_raster_images(data)
@@ -228,6 +266,7 @@ def parse_capture(data: bytes) -> tuple[str, ParsedCapture]:
         bitmap_count=len(raster_images),
         bitmap_images=bitmap_images,
         content_kind=content_kind,
+        package_entries=[],
     )
 
 
