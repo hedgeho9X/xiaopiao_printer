@@ -149,14 +149,27 @@ def strip_escpos_controls(data: bytes) -> bytes:
                 i += 1
             elif data[i + 1] in (0x40,):
                 i += 2
-            elif data[i + 1] in (0x61, 0x45, 0x21, 0x74):
+            elif data[i + 1] in (0x4A, 0x64, 0x61, 0x45, 0x21, 0x74):
                 i += 3
+            elif data[i + 1] == 0x70:
+                i += 5
             elif data[i + 1] == 0x2A:
                 if i + 4 < len(data):
                     width = data[i + 3] + data[i + 4] * 256
                     i += 5 + width
                 else:
                     i = len(data)
+            else:
+                i += 2
+            continue
+
+        if byte == 0x1C:  # FS, often used for CJK font style commands.
+            if i + 1 >= len(data):
+                i += 1
+            elif data[i + 1] in (0x21, 0x2D, 0x43, 0x57):
+                i += 3
+            elif data[i + 1] in (0x26, 0x2E):
+                i += 2
             else:
                 i += 2
             continue
@@ -195,7 +208,10 @@ def normalize_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     lines = [line.rstrip() for line in text.split("\n")]
-    return "\n".join(line for line in lines if line.strip())
+    lines = [line for line in lines if line.strip()]
+    if lines:
+        lines[0] = re.sub(r"^[\-=>!\ufffd\s]+(?=[\u4e00-\u9fff])", "", lines[0]).strip()
+    return "\n".join(lines)
 
 
 def is_noise_text(text: str) -> bool:
