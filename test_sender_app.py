@@ -1,3 +1,9 @@
+"""测试发送器 GUI。
+
+这个工具不是现场主程序，而是在没有美团/银豹时手动模拟一张小票。
+它可以把输入框里的内容发到 Receipt Voice Proxy 或 127.0.0.1:9100。
+"""
+
 import socket
 import time
 import tkinter as tk
@@ -12,6 +18,7 @@ DEFAULT_PORT = 9100
 
 
 def receipt_bytes(text: str) -> bytes:
+    """把输入文本包装成一张 ESC/POS 测试小票。"""
     payload = bytearray()
     payload.extend(b"\x1b@")
     payload.extend(b"\x1ba\x01")
@@ -25,12 +32,16 @@ def receipt_bytes(text: str) -> bytes:
 
 
 def send_tcp(host: str, port: int, data: bytes) -> None:
+    """把测试小票 bytes 发送到指定 TCP 地址。"""
     with socket.create_connection((host, port), timeout=10) as sock:
         sock.sendall(data)
 
 
 class TestSenderApp(tk.Tk):
+    """测试发送器窗口。"""
+
     def __init__(self):
+        """初始化窗口状态和默认发送目标。"""
         super().__init__()
         self.title("Receipt Test Sender")
         self.geometry("760x620")
@@ -44,6 +55,7 @@ class TestSenderApp(tk.Tk):
         self.create_widgets()
 
     def create_widgets(self) -> None:
+        """创建测试发送器的输入框、按钮和日志区域。"""
         root = ttk.Frame(self, padding=12)
         root.pack(fill=tk.BOTH, expand=True)
 
@@ -100,6 +112,7 @@ class TestSenderApp(tk.Tk):
         self.log("Open the monitor first, then send a test receipt here.")
 
     def load_example(self) -> None:
+        """加载一份示例订单内容。"""
         self.text_box.delete("1.0", tk.END)
         self.text_box.insert(
             tk.END,
@@ -112,9 +125,11 @@ class TestSenderApp(tk.Tk):
         )
 
     def clear_text(self) -> None:
+        """清空小票内容输入框。"""
         self.text_box.delete("1.0", tk.END)
 
     def current_bytes(self) -> bytes:
+        """读取输入框内容并生成 ESC/POS bytes。"""
         text = self.text_box.get("1.0", tk.END).strip()
         if not text:
             raise ValueError("Receipt content is empty.")
@@ -123,6 +138,7 @@ class TestSenderApp(tk.Tk):
         return data
 
     def send_to_proxy(self) -> None:
+        """发送测试小票到 Windows 代理打印机。"""
         printer = self.proxy_var.get().strip()
         if not printer:
             messagebox.showerror("Missing printer", "Proxy printer name is empty.")
@@ -136,6 +152,7 @@ class TestSenderApp(tk.Tk):
             messagebox.showerror("Send failed", str(exc))
 
     def send_to_tcp(self) -> None:
+        """发送测试小票到 TCP 端口。"""
         try:
             host = self.host_var.get().strip()
             port = int(self.port_var.get().strip())
@@ -147,6 +164,7 @@ class TestSenderApp(tk.Tk):
             messagebox.showerror("Send failed", str(exc))
 
     def log(self, message: str) -> None:
+        """向发送器日志框追加一条日志。"""
         stamp = time.strftime("%H:%M:%S")
         self.log_box.configure(state=tk.NORMAL)
         self.log_box.insert(tk.END, f"[{stamp}] {message}\n")
@@ -155,10 +173,10 @@ class TestSenderApp(tk.Tk):
 
 
 def main() -> int:
+    """启动测试发送器窗口。"""
     TestSenderApp().mainloop()
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

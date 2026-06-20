@@ -1,3 +1,13 @@
+"""命令行版小票抓包转发服务。
+
+这个文件是 GUI 之前的最小可用入口，适合排查或无界面运行：
+1. 监听本机 TCP 端口，接收小票打印 bytes。
+2. 保存原始 .bin 文件。
+3. 可选地把原始 bytes 转发到真实 Windows 打印机。
+
+正式现场更推荐使用 app_gui.py / ReceiptVoiceMonitor.exe。
+"""
+
 import argparse
 import datetime as dt
 import socket
@@ -6,6 +16,11 @@ from pathlib import Path
 
 
 def app_base_dir() -> Path:
+    """返回程序运行目录。
+
+    PyInstaller 打包后 ``__file__`` 会指向临时解压目录，所以 exe 场景下
+    要以 ``sys.executable`` 所在目录作为 captures 的保存位置。
+    """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
@@ -15,6 +30,7 @@ CAPTURE_DIR = app_base_dir() / "captures"
 
 
 def require_win32print():
+    """延迟导入 pywin32 的 win32print 模块。"""
     try:
         import win32print  # type: ignore
 
@@ -26,6 +42,7 @@ def require_win32print():
 
 
 def save_capture(data: bytes) -> Path:
+    """把原始打印 bytes 保存为带时间戳的 .bin 文件。"""
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     path = CAPTURE_DIR / f"{stamp}.bin"
@@ -34,6 +51,12 @@ def save_capture(data: bytes) -> Path:
 
 
 def send_raw_to_printer(printer_name: str, data: bytes) -> None:
+    """通过 Windows RAW 打印接口原样发送 bytes。
+
+    Args:
+        printer_name: Windows 打印机队列名称。
+        data: 原始 ESC/POS、XPS 或其他打印 bytes。
+    """
     win32print = require_win32print()
     handle = win32print.OpenPrinter(printer_name)
     try:
@@ -53,6 +76,7 @@ def send_raw_to_printer(printer_name: str, data: bytes) -> None:
 
 
 def read_connection(conn: socket.socket) -> bytes:
+    """读取一个 TCP 连接中的全部打印数据。"""
     chunks: list[bytes] = []
     while True:
         chunk = conn.recv(65536)
@@ -63,6 +87,14 @@ def read_connection(conn: socket.socket) -> bytes:
 
 
 def serve(host: str, port: int, printer: str | None, no_forward: bool) -> None:
+    """启动命令行版抓包服务。
+
+    Args:
+        host: 监听地址。
+        port: 监听端口。
+        printer: 真实小票机名称；no_forward 为 False 时必须提供。
+        no_forward: 是否只抓包不转发。
+    """
     if not no_forward and not printer:
         raise SystemExit("Either pass --printer or use --no-forward for capture-only mode.")
 
@@ -99,6 +131,7 @@ def serve(host: str, port: int, printer: str | None, no_forward: bool) -> None:
 
 
 def main() -> int:
+    """解析命令行参数并启动服务。"""
     parser = argparse.ArgumentParser(
         description="Capture TCP print bytes and optionally forward them to a printer."
     )

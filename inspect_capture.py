@@ -1,3 +1,12 @@
+"""小票抓包解析与预览生成模块。
+
+这个模块只读取抓到的原始 bytes，不负责监听和转发。它的核心职责是：
+1. 判断抓包属于 ESC/POS 文本、ESC/POS 位图，还是银豹 XPS 文档包。
+2. 从文本流中剥离 ESC/POS 控制码，得到适合播报/调试的文本。
+3. 从 XPS 文档包中提取 Glyphs 的 UnicodeString。
+4. 将位图或文本生成 preview.png，方便人工确认抓包内容。
+"""
+
 import argparse
 import re
 import zipfile
@@ -25,6 +34,8 @@ CONTROL_NAMES = {
 
 @dataclass
 class ParsedCapture:
+    """一次抓包解析后的结构化结果。"""
+
     markers: list[str]
     text: str
     preview_lines: list[str]
@@ -36,6 +47,12 @@ class ParsedCapture:
 
 @dataclass
 class RasterImage:
+    """ESC/POS 光栅位图片段。
+
+    ESC/POS 的 GS v 0 命令按“每行多少字节”和“多少行”描述图片。
+    每个字节代表 8 个横向像素，因此最终宽度是 width_bytes * 8。
+    """
+
     width_bytes: int
     height: int
     mode: int
@@ -43,10 +60,17 @@ class RasterImage:
 
     @property
     def width_pixels(self) -> int:
+        """返回位图横向像素数。"""
         return self.width_bytes * 8
 
 
 def hex_summary(data: bytes, limit: int = 256) -> str:
+    """生成原始 bytes 的十六进制摘要。
+
+    Args:
+        data: 原始打印数据。
+        limit: 最多展示多少个字节，避免日志过长。
+    """
     shown = data[:limit]
     hexed = " ".join(f"{byte:02X}" for byte in shown)
     if len(data) > limit:
@@ -55,10 +79,20 @@ def hex_summary(data: bytes, limit: int = 256) -> str:
 
 
 def is_zip_package(data: bytes) -> bool:
+    """判断数据是否是 ZIP/XPS 文档包。
+
+    银豹的驱动打印路径会产生 XPS/FixedDocument 包，它本质上是 ZIP。
+    """
     return data.startswith(b"PK\x03\x04")
 
 
 def list_zip_entries(data: bytes, limit: int = 50) -> list[str]:
+    """列出 ZIP/XPS 包内文件名。
+
+    Args:
+        data: ZIP/XPS 原始 bytes。
+        limit: 最多返回的文件数量。
+    """
     try:
         with zipfile.ZipFile(BytesIO(data)) as archive:
             return archive.namelist()[:limit]
@@ -67,6 +101,11 @@ def list_zip_entries(data: bytes, limit: int = 50) -> list[str]:
 
 
 def extract_xps_text(data: bytes) -> str:
+    """从银豹 XPS/FixedDocument 包中提取文本。
+
+    XPS 页面中的文字通常存放在 ``Glyphs`` 元素的 ``UnicodeString`` 属性里。
+    这里按页面坐标 OriginY/OriginX 重新排序，尽量还原小票上的阅读顺序。
+    """
     try:
         with zipfile.ZipFile(BytesIO(data)) as archive:
             page_names = sorted(
@@ -74,6 +113,7 @@ def extract_xps_text(data: bytes) -> str:
                 for name in archive.namelist()
                 if name.lower().endswith(".fpage") or "/pages/" in name.lower()
             )
+            # 保存为 (y, x, text)，后面按坐标恢复页面上的行顺序。
             glyphs: list[tuple[float, float, str]] = []
             for page_name in page_names:
                 try:
@@ -98,6 +138,7 @@ def extract_xps_text(data: bytes) -> str:
     if not glyphs:
         return ""
 
+    # 同一行的 Y 坐标可能有很小偏差，先粗略归并再按 X 排序。
     glyphs.sort(key=lambda item: (round(item[0] / 3) * 3, item[1]))
     lines: list[list[tuple[float, str]]] = []
     current_y: float | None = None
@@ -125,6 +166,10 @@ def extract_xps_text(data: bytes) -> str:
 
 
 def decode_text(data: bytes) -> tuple[str, str]:
+    """从 ESC/POS 文本流中解码可读文字。
+
+    先剥离控制码，再分别按 GBK 和 UTF-8 尝试解码，选择替换字符最少的结果。
+    """
     cleaned = strip_escpos_controls(data)
     candidates: list[tuple[str, str, int]] = []
     for encoding in ("gbk", "utf-8"):
@@ -138,13 +183,17 @@ def decode_text(data: bytes) -> tuple[str, str]:
 
 
 def strip_escpos_controls(data: bytes) -> bytes:
+    """剥离常见 ESC/POS 控制指令，只保留可能的文字 bytes。
+
+    注意：这个函数只用于解析文本，不会影响转发给真实小票机的原始数据。
+    """
     output = bytearray()
     i = 0
 
     while i < len(data):
         byte = data[i]
 
-        if byte == 0x1B:  # ESC
+        if byte == 0x1B:  # ESC，常见打印机控制命令前缀。
             if i + 1 >= len(data):
                 i += 1
             elif data[i + 1] in (0x40,):
@@ -152,6 +201,7 @@ def strip_escpos_controls(data: bytes) -> bytes:
             elif data[i + 1] in (0x4A, 0x64, 0x61, 0x45, 0x21, 0x74):
                 i += 3
             elif data[i + 1] == 0x70:
+                # ESC p m t1 t2：开钱箱/蜂鸣脉冲，银豹 IP 打印开头会带这个。
                 i += 5
             elif data[i + 1] == 0x2A:
                 if i + 4 < len(data):
@@ -163,7 +213,7 @@ def strip_escpos_controls(data: bytes) -> bytes:
                 i += 2
             continue
 
-        if byte == 0x1C:  # FS, often used for CJK font style commands.
+        if byte == 0x1C:  # FS，中文字符集/中文字体样式相关命令。
             if i + 1 >= len(data):
                 i += 1
             elif data[i + 1] in (0x21, 0x2D, 0x43, 0x57):
@@ -174,7 +224,7 @@ def strip_escpos_controls(data: bytes) -> bytes:
                 i += 2
             continue
 
-        if byte == 0x1D:  # GS
+        if byte == 0x1D:  # GS，切纸、二维码、光栅位图等命令常用前缀。
             if i + 1 >= len(data):
                 i += 1
             elif data[i + 1] == 0x56:
@@ -205,6 +255,10 @@ def strip_escpos_controls(data: bytes) -> bytes:
 
 
 def normalize_text(text: str) -> str:
+    """清理解码后的文本。
+
+    主要处理换行、不可见控制字符，以及银豹 IP 打印开头残留的符号前缀。
+    """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     lines = [line.rstrip() for line in text.split("\n")]
@@ -215,6 +269,10 @@ def normalize_text(text: str) -> str:
 
 
 def is_noise_text(text: str) -> bool:
+    """判断一段文本是否像误解码噪声。
+
+    位图数据如果被强行按 GBK/UTF-8 解码，会出现大量替换字符或无意义符号。
+    """
     if not text:
         return True
     if "\ufffd" in text:
@@ -224,6 +282,7 @@ def is_noise_text(text: str) -> bool:
 
 
 def extract_raster_images(data: bytes) -> list[RasterImage]:
+    """提取 ESC/POS GS v 0 光栅位图片段。"""
     images: list[RasterImage] = []
     i = 0
     while i < len(data):
@@ -243,6 +302,7 @@ def extract_raster_images(data: bytes) -> list[RasterImage]:
 
 
 def parse_markers(data: bytes) -> list[str]:
+    """识别抓包中出现过的关键打印控制标记。"""
     if is_zip_package(data):
         return ["[DOCUMENT PACKAGE: ZIP/XPS]"]
 
@@ -284,6 +344,12 @@ def parse_markers(data: bytes) -> list[str]:
 
 
 def parse_capture(data: bytes) -> tuple[str, ParsedCapture]:
+    """解析一份完整抓包。
+
+    Returns:
+        二元组 ``(encoding, parsed)``。encoding 表示文本来源/编码，
+        parsed 是结构化解析结果。
+    """
     if is_zip_package(data):
         entries = list_zip_entries(data)
         xps_text = extract_xps_text(data)
@@ -348,6 +414,7 @@ def parse_capture(data: bytes) -> tuple[str, ParsedCapture]:
 
 
 def find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """选择一个能显示中文的系统字体。"""
     candidates = [
         Path("C:/Windows/Fonts/msyh.ttc"),
         Path("C:/Windows/Fonts/simhei.ttf"),
@@ -361,6 +428,7 @@ def find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def make_preview(lines: list[str], output_path: Path) -> None:
+    """把文本行渲染成简单预览图。"""
     font = find_font(24)
     padding = 24
     line_height = 34
@@ -383,6 +451,7 @@ def make_preview(lines: list[str], output_path: Path) -> None:
 
 
 def raster_to_image(raster: RasterImage) -> Image.Image:
+    """把 ESC/POS 光栅位图片段转换为 Pillow 图片。"""
     image = Image.new("1", (raster.width_pixels, raster.height), 1)
     pixels = image.load()
     for y in range(raster.height):
@@ -396,6 +465,10 @@ def raster_to_image(raster: RasterImage) -> Image.Image:
 
 
 def make_capture_preview(data: bytes, lines: list[str], output_path: Path) -> None:
+    """根据抓包类型生成预览图。
+
+    如果抓包中有 ESC/POS 位图，则优先拼接位图；否则按文本渲染。
+    """
     rasters = extract_raster_images(data)
     if not rasters:
         make_preview(lines, output_path)
@@ -417,6 +490,7 @@ def make_capture_preview(data: bytes, lines: list[str], output_path: Path) -> No
 
 
 def main() -> int:
+    """命令行入口：解析一个 .bin 文件并生成预览。"""
     parser = argparse.ArgumentParser(description="Inspect captured ESC/POS bytes.")
     parser.add_argument("capture", type=Path, help="Path to a .bin capture file.")
     args = parser.parse_args()

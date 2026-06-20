@@ -1,9 +1,18 @@
+"""RAW 打印测试工具。
+
+这个脚本用于开发/现场排查：
+1. 列出 Windows 当前可见打印机。
+2. 直接向某个打印机发送一张 ESC/POS 测试小票。
+3. 直接向 TCP 端口发送同样的测试小票。
+"""
+
 import argparse
 import socket
 import sys
 
 
 def sample_receipt_bytes() -> bytes:
+    """构造一张最小 ESC/POS 测试小票。"""
     lines = [
         "测试小票",
         "------------------------",
@@ -15,7 +24,7 @@ def sample_receipt_bytes() -> bytes:
     ]
     text = "\n".join(lines)
 
-    # ESC/POS: initialize, center title, left body, feed, cut.
+    # ESC/POS 顺序：初始化 -> 标题居中 -> 正文左对齐 -> 走纸 -> 切纸。
     payload = bytearray()
     payload.extend(b"\x1b@")
     payload.extend(b"\x1ba\x01")
@@ -28,6 +37,7 @@ def sample_receipt_bytes() -> bytes:
 
 
 def require_win32print():
+    """延迟导入 pywin32 的 win32print 模块。"""
     try:
         import win32print  # type: ignore
 
@@ -39,6 +49,7 @@ def require_win32print():
 
 
 def list_printers() -> None:
+    """打印当前 Windows 可见的所有本地/网络打印机名称。"""
     win32print = require_win32print()
     printers = win32print.EnumPrinters(
         win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
@@ -53,6 +64,7 @@ def list_printers() -> None:
 
 
 def send_raw_to_printer(printer_name: str, data: bytes) -> None:
+    """把原始 bytes 作为 RAW 打印任务发送给指定 Windows 打印机。"""
     win32print = require_win32print()
     handle = win32print.OpenPrinter(printer_name)
     try:
@@ -72,11 +84,13 @@ def send_raw_to_printer(printer_name: str, data: bytes) -> None:
 
 
 def send_tcp(host: str, port: int, data: bytes) -> None:
+    """把原始 bytes 发送到指定 TCP 地址。"""
     with socket.create_connection((host, port), timeout=10) as sock:
         sock.sendall(data)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """命令行入口。"""
     parser = argparse.ArgumentParser(description="Send RAW ESC/POS test receipts.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -117,4 +131,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
