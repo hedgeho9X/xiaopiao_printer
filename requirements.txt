@@ -1,3 +1,6 @@
 pywin32
 pillow
-
+pywebview
+pydantic
+openai
+socksio

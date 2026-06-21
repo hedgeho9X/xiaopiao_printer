@@ -7,6 +7,7 @@ captures/*.preview.png
 captures/*.json
 !captures/.gitkeep
 logs/
+data/
 build/
 dist/
 *.spec

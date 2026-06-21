@@ -1,0 +1,208 @@
+/*
+  设置抽屉与历史订单样式。
+
+  本文件承载低频设置界面，避免主工作台 styles.css 继续膨胀。
+*/
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(24, 20, 17, 0.26);
+}
+
+.drawer-overlay[hidden],
+.settings-overlay[hidden],
+.settings-page {
+  display: none !important;
+}
+
+.settings-drawer {
+  width: min(780px, 100%);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.drawer-head,
+.settings-head,
+.settings-actions,
+.settings-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.drawer-head,
+.settings-head {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.drawer-head h2,
+.settings-head h2 {
+  margin: 0;
+}
+
+.drawer-head p {
+  min-height: 20px;
+  margin: 4px 0 0;
+}
+
+.settings-shell {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.settings-nav {
+  padding: var(--space-4);
+  border-right: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.settings-tab {
+  width: 100%;
+  justify-content: flex-start;
+  margin-bottom: var(--space-2);
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.settings-tab.is-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.settings-content {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
+.settings-page.is-active {
+  display: grid !important;
+  gap: var(--space-4);
+}
+
+.settings-page label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.settings-page label span {
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+.toggle-row {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.toggle-row input {
+  width: 22px;
+  min-height: 22px;
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.segmented button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.shortcut-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line-2);
+}
+
+.shortcut-row strong,
+.shortcut-row span {
+  display: block;
+}
+
+.shortcut-row button {
+  min-width: 120px;
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: rgba(24, 20, 17, 0.28);
+}
+
+.settings-dialog {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.history-list {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.history-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.history-title {
+  font-size: calc(20px * var(--type-scale));
+  font-weight: 800;
+}
+
+@media (max-width: 900px) {
+  .settings-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-nav {
+    display: flex;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .settings-tab {
+    width: auto;
+    margin: 0;
+  }
+}

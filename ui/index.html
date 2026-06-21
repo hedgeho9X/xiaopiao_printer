@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Receipt Voice</title>
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./settings.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Receipt Voice</h1>
+          <p id="monitor-status">监听未启动</p>
+        </div>
+        <div class="topbar-actions" aria-label="系统操作">
+          <button id="monitor-toggle" type="button">开始监听</button>
+          <button id="history-button" type="button">历史订单</button>
+          <button id="settings-button" type="button">设置</button>
+        </div>
+      </header>
+
+      <div id="feedback" class="sr-feedback" role="status" aria-live="polite"></div>
+
+      <main class="workspace">
+        <aside class="sidebar" aria-label="待制作订单">
+          <div class="sidebar-head">
+            <h2>待制作</h2>
+            <span id="queue-count">0 单</span>
+          </div>
+          <div id="order-list" class="order-list" role="listbox" aria-label="订单列表"></div>
+        </aside>
+
+        <section id="order-detail" class="order-detail" tabindex="-1" aria-label="当前订单">
+          <div class="empty-state">
+            <h2>暂无待制作订单</h2>
+            <p>监听启动后，新小票会自动进入队列。</p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="action-bar" aria-label="高频操作">
+        <button data-action="read_full" type="button" aria-label="播放当前订单">
+          <span class="action-key">1</span><span class="action-label">播放</span>
+        </button>
+        <button data-action="previous_order" type="button" aria-label="上一单">
+          <span class="action-key">6</span><span class="action-label">上一单</span>
+        </button>
+        <button data-action="next_order" type="button" aria-label="下一单">
+          <span class="action-key">7</span><span class="action-label">下一单</span>
+        </button>
+        <button data-action="complete_order" type="button" aria-label="完成订单">
+          <span class="action-key">8</span><span class="action-label">完成</span>
+        </button>
+      </footer>
+
+      <div id="settings-panel" class="drawer-overlay" hidden>
+        <aside class="settings-drawer" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <header class="drawer-head">
+            <div>
+              <h2 id="settings-title">设置</h2>
+              <p id="settings-feedback" aria-live="polite"></p>
+            </div>
+            <button id="settings-close" class="icon-button" type="button" aria-label="关闭设置">关闭</button>
+          </header>
+
+          <div class="settings-shell">
+            <nav class="settings-nav" aria-label="设置分类">
+              <button class="settings-tab is-active" type="button" data-settings-tab="speech">朗读</button>
+              <button class="settings-tab" type="button" data-settings-tab="shortcuts">快捷键</button>
+              <button class="settings-tab" type="button" data-settings-tab="appearance">外观</button>
+              <button class="settings-tab" type="button" data-settings-tab="llm">LLM</button>
+              <button class="settings-tab" type="button" data-settings-tab="system">系统</button>
+            </nav>
+
+            <div class="settings-content">
+              <section class="settings-page is-active" data-settings-page="speech" aria-labelledby="speech-title">
+                <h3 id="speech-title">朗读</h3>
+                <p class="settings-hint">语速支持五档，按 0 会按顺序循环。</p>
+                <div class="segmented" id="rate-options" role="radiogroup" aria-label="语速">
+                  <button type="button" data-rate="slow">慢速</button>
+                  <button type="button" data-rate="medium">中速</button>
+                  <button type="button" data-rate="fast">快速</button>
+                  <button type="button" data-rate="faster">更快</button>
+                  <button type="button" data-rate="fastest">最快</button>
+                </div>
+              </section>
+
+              <section class="settings-page" data-settings-page="shortcuts" aria-labelledby="shortcuts-title">
+                <div class="settings-title-row">
+                  <div>
+                    <h3 id="shortcuts-title">快捷键</h3>
+                    <p class="settings-hint">点击键位按钮后，按下新的键即可保存。</p>
+                  </div>
+                  <button id="shortcuts-reset" type="button">重置默认</button>
+                </div>
+                <div id="shortcut-list" class="shortcut-list"></div>
+              </section>
+
+              <section class="settings-page" data-settings-page="appearance" aria-labelledby="appearance-title">
+                <h3 id="appearance-title">外观</h3>
+                <p class="settings-hint">也可以用 Ctrl + 加号 / Ctrl + 减号快速调整字号。</p>
+                <div class="segmented" id="type-scale-options" role="radiogroup" aria-label="字号">
+                  <button type="button" data-type-scale="normal">标准</button>
+                  <button type="button" data-type-scale="large">大</button>
+                  <button type="button" data-type-scale="xlarge">更大</button>
+                  <button type="button" data-type-scale="xxlarge">超大</button>
+                  <button type="button" data-type-scale="max">最大</button>
+                </div>
+              </section>
+
+              <section class="settings-page" data-settings-page="llm" aria-labelledby="llm-title">
+                <h3 id="llm-title">LLM 解析</h3>
+                <label class="toggle-row">
+                  <input id="llm-enabled" type="checkbox">
+                  <span>启用 LLM 结构化解析</span>
+                </label>
+                <label><span>Provider</span><input id="llm-provider-name" type="text" autocomplete="off"></label>
+                <label><span>Base API</span><input id="llm-base-url" type="text" autocomplete="off"></label>
+                <label><span>API Key</span><input id="llm-api-key" type="password" autocomplete="off"></label>
+                <label><span>Model</span><input id="llm-model" type="text" autocomplete="off"></label>
+                <p id="llm-test-result" class="settings-result" role="status" aria-live="polite"></p>
+                <div class="settings-actions">
+                  <button id="llm-test-button" type="button">测试连接</button>
+                  <button id="settings-save" type="button">保存 LLM</button>
+                </div>
+              </section>
+
+              <section class="settings-page" data-settings-page="system" aria-labelledby="system-title">
+                <h3 id="system-title">系统</h3>
+                <label><span>真实小票机</span><select id="target-printer" aria-label="真实小票机"></select></label>
+                <div class="settings-actions">
+                  <button id="proxy-button" type="button">修复代理</button>
+                  <button id="data-folder-button" type="button">数据目录</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div id="history-panel" class="settings-overlay" hidden>
+        <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
+          <div class="settings-head">
+            <h2 id="history-title">历史订单</h2>
+            <button id="history-close" type="button" aria-label="关闭历史订单">关闭</button>
+          </div>
+          <div id="history-list" class="history-list" aria-live="polite"></div>
+        </section>
+      </div>
+    </div>
+
+    <script src="./bridge.js"></script>
+    <script src="./orders.js"></script>
+    <script src="./shortcuts.js"></script>
+    <script src="./settings_panel.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

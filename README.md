@@ -27,7 +27,45 @@ python print_raw.py list
 python print_raw.py test-printer "真实小票机名称"
 ```
 
-## 3. Capture And Forward
+## 3. Desktop App
+
+新桌面版入口：
+
+```powershell
+python app_desktop.py
+```
+
+新版本使用：
+
+```text
+Python 后端 + SQLite + pywebview Web UI
+```
+
+相关设计文档：
+
+```text
+docs\architecture.md
+docs\database-schema.md
+docs\shortcuts.md
+docs\ui-layout.md
+```
+
+打包主程序：
+
+```powershell
+pip install pyinstaller
+.\build_monitor.ps1
+```
+
+生成文件：
+
+```text
+dist\ReceiptVoiceMonitor.exe
+```
+
+## 4. Legacy Capture And Forward
+
+以下是旧 Tkinter PoC，保留用于现场回归和排查，不再作为主开发入口。
 
 图形界面版本：
 
@@ -86,7 +124,7 @@ python capture_server.py --no-forward
 python print_raw.py test-tcp 127.0.0.1 9100
 ```
 
-## 4. Inspect Capture
+## 5. Inspect Capture
 
 ```powershell
 python inspect_capture.py captures\某个文件.bin
@@ -98,7 +136,7 @@ python inspect_capture.py captures\某个文件.bin
 captures\某个文件.preview.png
 ```
 
-## 5. Test Sender App
+## 6. Test Sender App
 
 给店员试用的发送器：
 
