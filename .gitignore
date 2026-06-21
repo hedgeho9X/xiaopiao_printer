@@ -11,3 +11,6 @@ data/
 build/
 dist/
 *.spec
+vendor/WebView2Runtime/
+vendor/*.cab
+vendor/_WebView2RuntimeExtract/

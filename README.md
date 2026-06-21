@@ -57,6 +57,10 @@ pip install pyinstaller
 .\build_monitor.ps1
 ```
 
+`build_monitor.ps1` 会默认调用 `prepare_webview2_runtime.ps1`，把微软 WebView2
+Fixed Version Runtime 下载到 `vendor\WebView2Runtime` 并打包进 exe。这样店里电脑
+即使没有单独安装 WebView2，也能正常显示 UI。代价是 exe 体积会明显变大。
+
 生成文件：
 
 ```text
