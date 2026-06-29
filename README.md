@@ -67,6 +67,9 @@ Fixed Version Runtime 下载到 `vendor\WebView2Runtime` 并打包进 exe。这�
 dist\ReceiptVoiceMonitor.exe
 ```
 
+LLM 设置默认使用 DeepSeek：`https://api.deepseek.com`、`deepseek-v4-flash`。API Key 不写入源码，需要在设置页填写或由私有构建流程注入。
+设置页可以测试 JSON 输出能力，也可以调用 DeepSeek 余额接口查询当前 API Key 余额。
+
 ## 4. Legacy Capture And Forward
 
 以下是旧 Tkinter PoC，保留用于现场回归和排查，不再作为主开发入口。

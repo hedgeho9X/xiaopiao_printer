@@ -15,6 +15,7 @@ from .order_store import OrderStore
 def repair_legacy_orders(store: OrderStore) -> int:
     """修复旧版本留下的平台 unknown、重复订单和孤儿 print_jobs。"""
     repaired = 0
+    repaired += _delete_status_query_noise(store)
     for rows in _legacy_raw_groups(store):
         canonical = _choose_canonical_order(rows)
         for row in rows:
@@ -34,6 +35,48 @@ def repair_legacy_orders(store: OrderStore) -> int:
     repaired += _repair_orphan_print_jobs(store)
     store.conn.commit()
     return repaired
+
+
+def _delete_status_query_noise(store: OrderStore) -> int:
+    """删除旧版本误入库的 ESC/POS 状态查询包和空订单。"""
+    order_ids = [
+        str(row["id"])
+        for row in store.conn.execute(
+            """
+            SELECT o.id
+            FROM orders o
+            WHERE EXISTS (
+                SELECT 1 FROM print_jobs j
+                WHERE j.order_id = o.id AND hex(j.raw_bytes) IN ('100401', '100402', '100403', '100404')
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM print_jobs j
+                WHERE j.order_id = o.id AND hex(j.raw_bytes) NOT IN ('100401', '100402', '100403', '100404')
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM order_items i
+                WHERE i.order_id = o.id
+            )
+            """
+        ).fetchall()
+    ]
+    if order_ids:
+        placeholders = ",".join("?" for _ in order_ids)
+        store.conn.execute(
+            f"UPDATE print_jobs SET order_id = NULL WHERE order_id IN ({placeholders})",
+            order_ids,
+        )
+        store.conn.execute(f"DELETE FROM order_events WHERE order_id IN ({placeholders})", order_ids)
+        store.conn.execute(f"DELETE FROM order_items WHERE order_id IN ({placeholders})", order_ids)
+        store.conn.execute(f"DELETE FROM orders WHERE id IN ({placeholders})", order_ids)
+    deleted_jobs = store.conn.execute(
+        """
+        DELETE FROM print_jobs
+        WHERE order_id IS NULL
+          AND hex(raw_bytes) IN ('100401', '100402', '100403', '100404')
+        """
+    ).rowcount
+    return len(order_ids) + max(deleted_jobs, 0)
 
 
 def _legacy_raw_groups(store: OrderStore) -> list[list[sqlite3.Row]]:

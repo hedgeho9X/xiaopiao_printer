@@ -129,6 +129,7 @@ def build_api() -> tuple[BridgeApi, MultiReceiptMonitor]:
     store = OrderStore(conn)
     repair_legacy_orders(store)
     monitor = MultiReceiptMonitor(settings, store)
+    monitor.start()
     speech = SpeechService(settings)
     api = BridgeApi(store=store, settings=settings, monitor=monitor, speech=speech)
     return api, monitor

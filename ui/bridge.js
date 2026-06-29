@@ -34,11 +34,11 @@
       increase_type_scale: 'Ctrl+Plus',
       decrease_type_scale: 'Ctrl+Minus'
     }),
-    llm_enabled: '0',
-    llm_provider_name: 'OpenAI Compatible',
-    llm_base_url: 'https://api.openai.com/v1',
+    llm_enabled: '1',
+    llm_provider_name: 'DeepSeek',
+    llm_base_url: 'https://api.deepseek.com',
     llm_api_key: '',
-    llm_model: ''
+    llm_model: 'deepseek-v4-flash'
   };
 
   const mockOrders = [
@@ -115,6 +115,33 @@
     }
     if (name === 'test_llm_connection') {
       return { ok: false, error: '当前没有连接 Python 后端，请用 python app_desktop.py 打开桌面程序后再测试。' };
+    }
+    if (name === 'get_llm_balance') {
+      return { ok: false, error: '当前没有连接 Python 后端，请用 python app_desktop.py 打开桌面程序后再查询余额。' };
+    }
+    if (name === 'test_printer') {
+      return { ok: false, error: '当前没有连接 Python 后端，请用桌面程序测试真实打印机。' };
+    }
+    if (name === 'test_printer_gdi') {
+      return { ok: false, error: '当前没有连接 Python 后端，请用桌面程序测试普通打印。' };
+    }
+    if (name === 'get_printer_diagnostics') {
+      return {
+        ok: true,
+        data: {
+          diagnostics: {
+            name: args[0] || 'GP-5850II',
+            driver_name: 'Mock Driver',
+            port_name: 'USB001',
+            status_text: '就绪或无明确错误',
+            job_count: 0,
+            jobs: []
+          }
+        }
+      };
+    }
+    if (name === 'create_proxy_printer' || name === 'start_monitor') {
+      return { ok: true, data: {} };
     }
     if (name === 'get_monitor_status') {
       return {

@@ -2,10 +2,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-captures/*.bin
-captures/*.preview.png
-captures/*.json
+captures/
 !captures/.gitkeep
+HBC/
 logs/
 data/
 build/

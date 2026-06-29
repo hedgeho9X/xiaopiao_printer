@@ -12,10 +12,12 @@
       <header class="topbar">
         <div>
           <h1>Receipt Voice</h1>
-          <p id="monitor-status">监听未启动</p>
+          <p id="monitor-status" class="monitor-status is-stopped" role="status" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="monitor-status-text">监听启动中</span>
+          </p>
         </div>
         <div class="topbar-actions" aria-label="系统操作">
-          <button id="monitor-toggle" type="button">开始监听</button>
           <button id="history-button" type="button">历史订单</button>
           <button id="settings-button" type="button">设置</button>
         </div>
@@ -112,17 +114,16 @@
 
               <section class="settings-page" data-settings-page="llm" aria-labelledby="llm-title">
                 <h3 id="llm-title">LLM 解析</h3>
-                <label class="toggle-row">
-                  <input id="llm-enabled" type="checkbox">
-                  <span>启用 LLM 结构化解析</span>
-                </label>
+                <p class="settings-hint">当前版本只使用 LLM 结构化解析；配置缺失或连接失败时，订单不会入队，并会显示错误。</p>
                 <label><span>Provider</span><input id="llm-provider-name" type="text" autocomplete="off"></label>
                 <label><span>Base API</span><input id="llm-base-url" type="text" autocomplete="off"></label>
                 <label><span>API Key</span><input id="llm-api-key" type="password" autocomplete="off"></label>
                 <label><span>Model</span><input id="llm-model" type="text" autocomplete="off"></label>
                 <p id="llm-test-result" class="settings-result" role="status" aria-live="polite"></p>
+                <p id="llm-balance-result" class="settings-result balance-result" role="status" aria-live="polite"></p>
                 <div class="settings-actions">
                   <button id="llm-test-button" type="button">测试连接</button>
+                  <button id="llm-balance-button" type="button">查询余额</button>
                   <button id="settings-save" type="button">保存 LLM</button>
                 </div>
               </section>
@@ -131,8 +132,14 @@
                 <h3 id="system-title">系统</h3>
                 <label><span>真实小票机</span><select id="target-printer" aria-label="真实小票机"></select></label>
                 <div class="settings-actions">
+                  <button id="printer-diagnostics-button" type="button">刷新诊断</button>
+                  <button id="printer-test-button" type="button">RAW 测试</button>
+                  <button id="printer-gdi-test-button" type="button">普通测试</button>
                   <button id="proxy-button" type="button">修复代理</button>
                   <button id="data-folder-button" type="button">数据目录</button>
+                </div>
+                <div id="printer-diagnostics-result" class="diagnostics-panel" aria-live="polite">
+                  选择真实小票机后，可刷新诊断或分别测试 RAW / 普通打印。
                 </div>
               </section>
             </div>

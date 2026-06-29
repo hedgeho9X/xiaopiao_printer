@@ -26,7 +26,8 @@ POS 打印数据
 | `app_core.monitor` | 监听本机端口，接收打印 bytes，串联入库/转发/结构化 |
 | `app_core.printer` | Windows 打印机枚举、RAW 转发、代理打印机创建 |
 | `app_core.receipt_parser` | text-only 小票解码与 ESC/POS 控制码清洗 |
-| `app_core.order_parser` | 美团/银豹规则解析，后续可替换或接入 LLM |
+| `app_core.order_parser` | 美团/银豹规则解析 |
+| `app_core.llm_parser` | DeepSeek/OpenAI-compatible JSON Mode 解析和 DeepSeek 余额查询 |
 | `app_core.order_store` | 订单去重、商品重建、完成、撤销、队列查询 |
 | `app_core.speech` | 按快捷键文档生成朗读文本，并调用 Windows SAPI |
 | `app_core.bridge_api` | pywebview 暴露给 JS 的稳定 API |
@@ -53,4 +54,3 @@ test_sender_app.py
 ```
 
 新功能优先写入 `app_core/` 和 `ui/`，不要继续扩大旧 Tkinter PoC。
-

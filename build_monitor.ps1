@@ -44,6 +44,8 @@ $PyInstallerArgs = @(
   "--add-data", "ui;ui",
   "--add-data", "vendor\WebView2Runtime;WebView2Runtime",
   "--hidden-import", "win32print",
+  "--hidden-import", "win32ui",
+  "--hidden-import", "win32timezone",
   "--hidden-import", "pywintypes",
   "--hidden-import", "win32com.client",
   "--hidden-import", "pythoncom",

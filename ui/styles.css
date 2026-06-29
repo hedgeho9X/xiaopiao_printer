@@ -20,6 +20,10 @@
   --accent-hover: #f15f1e;
   --accent-soft: #ff6f2c1a;
   --accent-ink: #ffffff;
+  --ok: #168a3a;
+  --ok-soft: #e7f6ec;
+  --bad: #c8201f;
+  --bad-soft: #fdecec;
   --focus: var(--accent);
   --danger: #c8201f;
   --radius-sm: 8px;
@@ -128,6 +132,45 @@ input {
   margin: 4px 0 0;
   color: var(--ink-3);
   font-size: calc(15px * var(--type-scale));
+}
+
+.monitor-status {
+  width: fit-content;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+
+.status-dot {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--bad);
+  box-shadow: 0 0 0 4px var(--bad-soft);
+}
+
+.monitor-status.is-running {
+  border-color: #a9d9b8;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.monitor-status.is-running .status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px #ccebd5;
+}
+
+.monitor-status.is-stopped {
+  border-color: #efb8b8;
+  background: var(--bad-soft);
+  color: var(--bad);
 }
 
 .topbar-actions {

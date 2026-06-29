@@ -107,15 +107,20 @@
   function bindLlm() {
     document.getElementById('settings-save').addEventListener('click', saveLlmSettings);
     document.getElementById('llm-test-button').addEventListener('click', testLlmConnection);
+    document.getElementById('llm-balance-button').addEventListener('click', queryLlmBalance);
   }
 
   function bindSystem() {
-    document.getElementById('target-printer').addEventListener('change', event => {
-      savePatch({ target_printer_name: event.target.value }, '真实小票机已保存。');
+    document.getElementById('target-printer').addEventListener('change', async event => {
+      await savePatch({ target_printer_name: event.target.value }, '真实小票机已保存。可先刷新诊断，再分别做 RAW 测试和普通测试。');
+      await refreshPrinterDiagnostics();
     });
+    document.getElementById('printer-diagnostics-button').addEventListener('click', refreshPrinterDiagnostics);
+    document.getElementById('printer-test-button').addEventListener('click', testPrinter);
+    document.getElementById('printer-gdi-test-button').addEventListener('click', testGdiPrinter);
     document.getElementById('proxy-button').addEventListener('click', async () => {
-      const result = await ReceiptBridge.call('create_proxy_printer');
-      setFeedback(result.ok ? '代理打印机已创建或修复。' : result.error);
+      const result = await autoPrepareForwarding();
+      if (result.ok) setFeedback('代理打印机和监听已尝试修复。');
     });
     document.getElementById('data-folder-button').addEventListener('click', () => ReceiptBridge.call('open_data_folder'));
   }
@@ -192,16 +197,15 @@
   }
 
   function fillLlmSettings() {
-    document.getElementById('llm-enabled').checked = settings.llm_enabled === '1';
-    document.getElementById('llm-provider-name').value = settings.llm_provider_name || 'OpenAI Compatible';
-    document.getElementById('llm-base-url').value = settings.llm_base_url || 'https://api.openai.com/v1';
+    document.getElementById('llm-provider-name').value = settings.llm_provider_name || 'DeepSeek';
+    document.getElementById('llm-base-url').value = settings.llm_base_url || 'https://api.deepseek.com';
     document.getElementById('llm-api-key').value = settings.llm_api_key || '';
     document.getElementById('llm-model').value = settings.llm_model || '';
   }
 
   function collectLlmSettings() {
     return {
-      llm_enabled: document.getElementById('llm-enabled').checked ? '1' : '0',
+      llm_enabled: '1',
       llm_provider_name: document.getElementById('llm-provider-name').value.trim(),
       llm_base_url: document.getElementById('llm-base-url').value.trim(),
       llm_api_key: document.getElementById('llm-api-key').value.trim(),
@@ -211,6 +215,77 @@
 
   async function saveLlmSettings() {
     await savePatch(collectLlmSettings(), 'LLM 设置已保存。');
+  }
+
+  async function testPrinter() {
+    const button = document.getElementById('printer-test-button');
+    button.disabled = true;
+    renderPrinterMessage('正在发送 RAW ESC/POS 测试...');
+    try {
+      const result = await ReceiptBridge.call('test_printer', document.getElementById('target-printer').value);
+      if (result.ok) {
+        setFeedback(result.data.message);
+        await refreshPrinterDiagnostics(result.data.job);
+      } else {
+        renderPrinterMessage(`RAW 测试失败：${result.error}`);
+        setFeedback(`RAW 测试失败：${result.error}`);
+      }
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function testGdiPrinter() {
+    const button = document.getElementById('printer-gdi-test-button');
+    button.disabled = true;
+    renderPrinterMessage('正在发送 Windows 普通打印测试...');
+    try {
+      const result = await ReceiptBridge.call('test_printer_gdi', document.getElementById('target-printer').value);
+      if (result.ok) {
+        setFeedback(result.data.message);
+        await refreshPrinterDiagnostics(result.data.job);
+      } else {
+        renderPrinterMessage(`普通测试失败：${result.error}`);
+        setFeedback(`普通测试失败：${result.error}`);
+      }
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function refreshPrinterDiagnostics(lastJob) {
+    const printerName = document.getElementById('target-printer').value;
+    if (!printerName) {
+      renderPrinterMessage('请先选择真实小票机。');
+      return;
+    }
+    const button = document.getElementById('printer-diagnostics-button');
+    button.disabled = true;
+    try {
+      const result = await ReceiptBridge.call('get_printer_diagnostics', printerName);
+      if (result.ok) {
+        renderPrinterDiagnostics(result.data.diagnostics, lastJob);
+      } else {
+        renderPrinterMessage(`诊断失败：${result.error}`);
+      }
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function autoPrepareForwarding() {
+    const proxyResult = await ReceiptBridge.call('create_proxy_printer');
+    if (!proxyResult.ok) {
+      setFeedback(`代理修复失败：${proxyResult.error}`);
+      return proxyResult;
+    }
+    const monitorResult = await ReceiptBridge.call('start_monitor');
+    if (!monitorResult.ok) {
+      setFeedback(`监听启动失败：${monitorResult.error}`);
+      return monitorResult;
+    }
+    setFeedback('代理打印机已修复，监听已启动。');
+    return monitorResult;
   }
 
   async function testLlmConnection() {
@@ -225,6 +300,31 @@
     } finally {
       button.disabled = false;
     }
+  }
+
+  async function queryLlmBalance() {
+    const button = document.getElementById('llm-balance-button');
+    button.disabled = true;
+    document.getElementById('llm-balance-result').textContent = '正在查询余额...';
+    try {
+      const result = await ReceiptBridge.call('get_llm_balance', collectLlmSettings());
+      const message = result.ok ? formatBalance(result.data.balance) : `余额查询失败：${result.error}`;
+      document.getElementById('llm-balance-result').textContent = message;
+      setFeedback(message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function formatBalance(balance) {
+    const available = balance && balance.is_available ? '可用' : '不可用';
+    const infos = balance && Array.isArray(balance.balance_infos) ? balance.balance_infos : [];
+    if (!infos.length) return `账户状态：${available}。暂无余额明细。`;
+    const details = infos.map(item => {
+      const currency = item.currency || '未知币种';
+      return `${currency} 总余额 ${item.total_balance || '0'}，赠金 ${item.granted_balance || '0'}，充值 ${item.topped_up_balance || '0'}`;
+    });
+    return `账户状态：${available}。${details.join('；')}`;
   }
 
   function fillPrinterSelect(printers, selected) {
@@ -252,6 +352,52 @@
 
   function typeScaleLabel(scale) {
     return { normal: '标准', large: '大', xlarge: '更大', xxlarge: '超大', max: '最大' }[scale] || scale;
+  }
+
+  function renderPrinterDiagnostics(info, lastJob) {
+    const jobs = Array.isArray(info.jobs) ? info.jobs : [];
+    const jobHtml = jobs.length
+      ? jobs.map(job => `
+          <li>
+            #${escapeHtml(job.job_id || '')}
+            ${escapeHtml(job.document || '未命名任务')}：
+            ${escapeHtml(job.status_text || '未知状态')}
+          </li>
+        `).join('')
+      : '<li>当前队列为空。</li>';
+    const lastJobHtml = lastJob ? `
+      <div class="diagnostic-box">
+        <strong>最近测试</strong>
+        <span>${escapeHtml(testTypeLabel(lastJob.test_type))}</span>
+        <span>任务：${escapeHtml(lastJob.job_id || '未知')}</span>
+        <span>${escapeHtml(lastJob.message || '')}</span>
+      </div>
+    ` : '';
+    document.getElementById('printer-diagnostics-result').innerHTML = `
+      <div class="diagnostic-grid">
+        <div class="diagnostic-box"><strong>打印机</strong><span>${escapeHtml(info.name || '')}</span></div>
+        <div class="diagnostic-box"><strong>驱动</strong><span>${escapeHtml(info.driver_name || '')}</span></div>
+        <div class="diagnostic-box"><strong>端口</strong><span>${escapeHtml(info.port_name || '')}</span></div>
+        <div class="diagnostic-box"><strong>状态</strong><span>${escapeHtml(info.status_text || '')}</span></div>
+      </div>
+      ${lastJobHtml}
+      <div class="diagnostic-box">
+        <strong>队列 ${escapeHtml(info.job_count || 0)} 个任务</strong>
+        <ul>${jobHtml}</ul>
+      </div>
+      <p class="settings-hint">RAW 不出、普通测试出：多半是驱动不透传 ESC/POS。两个都不出：优先检查端口、离线、队列暂停或驱动。</p>
+    `;
+  }
+
+  function renderPrinterMessage(message) {
+    document.getElementById('printer-diagnostics-result').textContent = message;
+  }
+
+  function testTypeLabel(type) {
+    return {
+      raw_escpos: 'RAW ESC/POS 测试',
+      windows_gdi: 'Windows 普通测试'
+    }[type] || '测试';
   }
 
   function setFeedback(text) {

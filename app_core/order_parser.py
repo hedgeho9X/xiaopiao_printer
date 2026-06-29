@@ -62,7 +62,7 @@ def normalize_order_draft(platform: str, raw_text: str, draft: OrderDraft) -> Or
             pickup_method=None if draft.pickup_method == order_type else draft.pickup_method,
             location=location,
             order_note=draft.order_note,
-            items=draft.items,
+            items=_normalize_yinbao_items_from_raw(draft.items),
         )
     return draft
 
@@ -215,6 +215,75 @@ def _parse_simple_yinbao_items(chunk: list[str]) -> list[ItemDraft]:
         )
         index += 1
     return items
+
+
+def _normalize_yinbao_items_from_raw(items: list[ItemDraft]) -> list[ItemDraft]:
+    """根据银豹商品原文校正 LLM 可能解析反的数量和价格。"""
+    return [_normalize_yinbao_item_from_raw(item) for item in items]
+
+
+def _normalize_yinbao_item_from_raw(item: ItemDraft) -> ItemDraft:
+    """用商品 raw_text 的表格形态修正一个银豹商品。"""
+    raw_lines = _clean_lines(item.raw_text or "")
+    inline = _parse_yinbao_inline_item_line(raw_lines[0]) if raw_lines else None
+    if inline:
+        parsed_name, price, quantity = inline
+        name = item.name
+        if not name or _has_yinbao_number_columns(name):
+            name = _clean_yinbao_inline_name(parsed_name)
+        return ItemDraft(
+            name=name,
+            quantity=quantity,
+            price=price,
+            item_options=item.item_options,
+            raw_text=item.raw_text,
+        )
+
+    quantity_price = _parse_yinbao_quantity_price_line(raw_lines)
+    if quantity_price:
+        quantity, price = quantity_price
+        return ItemDraft(
+            name=item.name,
+            quantity=quantity,
+            price=price,
+            item_options=item.item_options,
+            raw_text=item.raw_text,
+        )
+    return item
+
+
+def _has_yinbao_number_columns(value: str) -> bool:
+    """判断商品名是否还带着银豹的 ``单价 数量 小计`` 数字列。"""
+    return bool(re.search(r"\s+[\d.]+\s+[\d.]+\s+[\d.]+$", value))
+
+
+def _clean_yinbao_inline_name(value: str) -> str:
+    """清理银豹同一行商品解析出的名称。"""
+    text = value.strip()
+    bracket = re.fullmatch(r"\[(.+?)\]", text)
+    return bracket.group(1).strip() if bracket else text
+
+
+def _parse_yinbao_inline_item_line(line: str) -> tuple[str, str, str] | None:
+    """解析 ``商品名 单价 数量 小计`` 在同一行的银豹商品。"""
+    match = re.match(r"^(.+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)$", line)
+    if not match:
+        return None
+    name = match.group(1).strip()
+    price = match.group(2)
+    quantity = match.group(3)
+    return name, price, quantity
+
+
+def _parse_yinbao_quantity_price_line(lines: list[str]) -> tuple[str, str] | None:
+    """解析银豹商品名下一行只有 ``数量 小计/价格`` 的情况。"""
+    for line in lines[1:]:
+        if not re.fullmatch(r"[\d.\s]+", line):
+            continue
+        numbers = re.findall(r"[\d.]+", line)
+        if len(numbers) >= 2:
+            return numbers[0], numbers[-1]
+    return None
 
 
 def _fallback_draft(raw_text: str) -> OrderDraft:

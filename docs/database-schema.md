@@ -338,6 +338,11 @@ CREATE TABLE IF NOT EXISTS app_settings (
 | `tts_rate` | `-2` | 默认语速 |
 | `ui_theme` | `light` | UI 主题 |
 | `ui_type_scale` | `normal` | 字号 |
+| `llm_enabled` | `0` | 是否启用 LLM 结构化解析；默认关闭以避免自动消耗余额 |
+| `llm_provider_name` | `DeepSeek` | LLM provider 显示名 |
+| `llm_base_url` | `https://api.deepseek.com` | OpenAI-compatible Base API |
+| `llm_api_key` | 空字符串 | DeepSeek API Key，本地数据库保存；源码不内置真实 Key，可在设置页填写 |
+| `llm_model` | `deepseek-v4-flash` | 默认结构化解析模型 |
 
 ## 写入流程
 

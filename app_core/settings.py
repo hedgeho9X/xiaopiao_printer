@@ -29,6 +29,11 @@ DEFAULT_SHORTCUTS: dict[str, str] = {
     "decrease_type_scale": "Ctrl+Minus",
 }
 
+DEFAULT_LLM_PROVIDER_NAME = "DeepSeek"
+DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
+DEFAULT_LLM_API_KEY = ""
+DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+
 DEFAULT_SETTINGS: dict[str, str] = {
     "schema_version": "1",
     "network_print_platform": "yinbao",
@@ -43,11 +48,11 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "ui_theme": "light",
     "ui_type_scale": "normal",
     "shortcuts": json.dumps(DEFAULT_SHORTCUTS, ensure_ascii=False),
-    "llm_enabled": "0",
-    "llm_provider_name": "OpenAI Compatible",
-    "llm_base_url": "https://api.openai.com/v1",
-    "llm_api_key": "",
-    "llm_model": "",
+    "llm_enabled": "1",
+    "llm_provider_name": DEFAULT_LLM_PROVIDER_NAME,
+    "llm_base_url": DEFAULT_LLM_BASE_URL,
+    "llm_api_key": DEFAULT_LLM_API_KEY,
+    "llm_model": DEFAULT_LLM_MODEL,
 }
 
 PRINT_METHOD_LABELS = {
@@ -76,6 +81,7 @@ class SettingsStore:
                 """,
                 (key, value, now),
             )
+        self._fill_empty_llm_defaults(now)
         self.conn.commit()
 
     def get(self, key: str, default: str = "") -> str:
@@ -136,6 +142,35 @@ class SettingsStore:
         next_rate = RATE_ORDER[(index + 1) % len(RATE_ORDER)]
         self.set("tts_rate", next_rate)
         return next_rate
+
+    def _fill_empty_llm_defaults(self, now: str) -> None:
+        """为旧数据库补齐 DeepSeek 默认配置，但不覆盖用户自定义配置。"""
+        replacements = {
+            "llm_provider_name": ("", "OpenAI Compatible"),
+            "llm_base_url": ("", "https://api.openai.com/v1"),
+            "llm_api_key": ("",),
+            "llm_model": ("",),
+        }
+        defaults = {
+            "llm_provider_name": DEFAULT_LLM_PROVIDER_NAME,
+            "llm_base_url": DEFAULT_LLM_BASE_URL,
+            "llm_api_key": DEFAULT_LLM_API_KEY,
+            "llm_model": DEFAULT_LLM_MODEL,
+        }
+        for key, legacy_values in replacements.items():
+            current = self.get(key, "")
+            if current.strip() not in legacy_values:
+                continue
+            self.conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value = excluded.value,
+                  updated_at = excluded.updated_at
+                """,
+                (key, defaults[key], now),
+            )
 
     @staticmethod
     def _normalize_shortcuts(value: Any) -> dict[str, str] | str:

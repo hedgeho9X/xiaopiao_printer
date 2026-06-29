@@ -15,6 +15,7 @@
     bindButtons();
     ReceiptShortcuts.bindShortcuts(handleAction);
     await loadSettings();
+    await ensureMonitorStarted();
     await refreshStatus();
     await refreshOrders();
     window.setInterval(refreshOrders, pollMs);
@@ -43,17 +44,25 @@
     const monitorText = status.monitors ? status.monitors.map(monitor => (
       `${monitor.printMethodLabel} ${monitor.port} · ${monitor.platform}`
     )).join(' / ') : `${status.printMethodLabel} · ${status.platform}`;
-    document.getElementById('monitor-status').textContent = status.running
+    const statusEl = document.getElementById('monitor-status');
+    const statusTextEl = document.getElementById('monitor-status-text');
+    statusEl.classList.toggle('is-running', Boolean(status.running));
+    statusEl.classList.toggle('is-stopped', !status.running);
+    statusEl.setAttribute('aria-label', status.running ? '监听正常' : '监听未启动');
+    statusTextEl.textContent = status.running
       ? `监听中：${monitorText}`
       : `监听未启动：${monitorText}`;
-    document.getElementById('monitor-toggle').textContent = status.running ? '停止监听' : '开始监听';
+  }
+
+  async function ensureMonitorStarted() {
+    const result = await ReceiptBridge.call('start_monitor');
+    if (!result.ok) setFeedback(result.error);
   }
 
   function bindButtons() {
     document.querySelectorAll('[data-action]').forEach(button => {
       button.addEventListener('click', () => handleAction(button.dataset.action));
     });
-    document.getElementById('monitor-toggle').addEventListener('click', toggleMonitor);
     document.getElementById('history-button').addEventListener('click', openHistory);
     document.getElementById('history-close').addEventListener('click', closeHistory);
     document.getElementById('settings-button').addEventListener('click', ReceiptSettingsPanel.open);
@@ -134,16 +143,6 @@
       ReceiptSettingsPanel.apply(result.data.settings, cachedPrinters);
     }
     return result;
-  }
-
-  async function toggleMonitor() {
-    const status = await ReceiptBridge.call('get_monitor_status');
-    if (!status.ok) return setFeedback(status.error);
-    const result = status.data.status.running
-      ? await ReceiptBridge.call('stop_monitor')
-      : await ReceiptBridge.call('start_monitor');
-    if (!result.ok) return setFeedback(result.error);
-    await refreshStatus();
   }
 
   async function openHistory() {

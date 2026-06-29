@@ -15,6 +15,14 @@ from app_core.monitor import ReceiptMonitor
 from app_core.order_parser import detect_platform_from_text, normalize_order_draft, parse_order_text
 from app_core.order_repair import repair_legacy_orders
 from app_core.order_store import OrderStore
+import app_core.printer as printer_module
+from app_core.printer import (
+    describe_job_status,
+    describe_printer_status,
+    has_error_job_status,
+    is_receipt_printer_candidate,
+    summarize_print_job,
+)
 from app_core.settings import RATE_ORDER, SettingsStore
 from app_core.speech import build_overview_text, build_switch_order_text
 
@@ -309,6 +317,36 @@ class CoreTest(unittest.TestCase):
         self.settings.set("tts_rate", "broken")
         self.assertEqual(self.settings.cycle_rate(), "fast")
 
+    def test_print_job_status_description(self) -> None:
+        """打印任务状态会转换成现场可读的中文诊断信息。"""
+        self.assertTrue(has_error_job_status(0x00000020 | 0x00000040))
+        self.assertFalse(has_error_job_status(0x00000008 | 0x00000010))
+        self.assertIn("离线", describe_job_status(0x00000020))
+        self.assertIn("正在打印", describe_job_status(0x00000010))
+        self.assertIn("缺纸", describe_printer_status(0x00000010))
+        summary = summarize_print_job({"JobId": 7, "pDocument": "测试", "Status": 0x00000020})
+        self.assertEqual(summary["job_id"], 7)
+        self.assertIn("离线", summary["status_text"])
+
+    def test_receipt_printer_candidate_filters_old_office_printer(self) -> None:
+        """喷墨一体机、IPP/WSD 老打印机不会出现在真实小票机候选里。"""
+        original = printer_module.get_printer_summary
+        try:
+            printer_module.get_printer_summary = lambda _name: {
+                "driver_name": "Microsoft IPP Class Driver",
+                "port_name": "WSD-5780dc4e-d5e9-4369-9ab2-3db8cbc4c104",
+                "status_code": 0,
+            }
+            self.assertFalse(is_receipt_printer_candidate("Mi All-in-One Inkjet Printer [6B0AF2]"))
+            printer_module.get_printer_summary = lambda _name: {
+                "driver_name": "GP-58 Series",
+                "port_name": "USB001",
+                "status_code": 0,
+            }
+            self.assertTrue(is_receipt_printer_candidate("GP-5850II"))
+        finally:
+            printer_module.get_printer_summary = original
+
     def test_same_order_no_with_different_text_creates_new_order(self) -> None:
         """即使平台单号相同，只要小票全文不同就按新订单处理。"""
         changed_text = YINBAO_TEXT.replace("原味瑞士卷￥0/", "抹茶瑞士卷￥0/")
@@ -379,8 +417,8 @@ class CoreTest(unittest.TestCase):
         self.assertTrue((order.dedupe_key or "").startswith("raw:"))
         self.assertEqual(order.print_count, 2)
 
-    def test_monitor_parse_failure_keeps_detected_platform(self) -> None:
-        """解析异常兜底时仍使用已识别平台，不再创建 unknown 订单。"""
+    def test_monitor_parse_failure_does_not_create_unknown_order(self) -> None:
+        """LLM 解析异常时只保留 print_job，不再创建未解析订单。"""
         monitor = ReceiptMonitor(settings=self.settings, store=self.store)
 
         def broken_parse(_platform: str, _raw_text: str):
@@ -388,11 +426,12 @@ class CoreTest(unittest.TestCase):
 
         monitor._parse_order = broken_parse  # type: ignore[method-assign]
         order_id = monitor.handle_bytes(MEITUAN_TEXT.encode("utf-8"))
-        order = self.store.get_order(order_id)
-        assert order is not None
-        self.assertEqual(order.platform, "meituan")
-        self.assertEqual(order.display_no, "美团 #1")
-        self.assertEqual(order.items[0].name, "经典美式")
+        self.assertIsNone(order_id)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0)
+        job = self.conn.execute("SELECT platform, order_id FROM print_jobs").fetchone()
+        self.assertEqual(job["platform"], "meituan")
+        self.assertIsNone(job["order_id"])
+        self.assertIn("模拟解析失败", monitor.last_error or "")
 
     def test_repair_legacy_unknown_duplicate(self) -> None:
         """旧版本同 raw 的 unknown 订单会合并回已解析订单。"""

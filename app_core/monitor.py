@@ -10,8 +10,9 @@ import socket
 import threading
 from dataclasses import dataclass
 
+from .errors import ReceiptVoiceError
 from .llm_parser import parse_order_text_with_llm
-from .order_parser import detect_platform_from_text, normalize_order_draft, parse_order_text
+from .order_parser import detect_platform_from_text, normalize_order_draft
 from .order_store import OrderStore
 from .printer import send_raw_to_printer
 from .receipt_parser import parse_receipt_text
@@ -20,6 +21,9 @@ from .settings import PRINT_METHOD_LABELS, SettingsStore
 
 HOST = "127.0.0.1"
 PORT = 9100
+CLIENT_READ_TIMEOUT_SECONDS = 0.4
+ESC_POS_REALTIME_STATUS_PREFIX = b"\x10\x04"
+ESC_POS_READY_STATUS = b"\x12"
 
 
 @dataclass(slots=True)
@@ -112,7 +116,7 @@ class ReceiptMonitor:
             last_error=self.last_error,
         )
 
-    def handle_bytes(self, data: bytes) -> str:
+    def handle_bytes(self, data: bytes) -> str | None:
         """处理一份完整打印 bytes，并返回关联订单 ID。"""
         parsed = parse_receipt_text(data)
         platform = detect_platform_from_text(parsed.text, self.platform)
@@ -132,27 +136,27 @@ class ReceiptMonitor:
                 draft=draft,
             )
         except Exception as exc:
-            self.last_error = f"订单解析失败：{exc}"
-            fallback = normalize_order_draft(platform, parsed.text, parse_order_text(platform, parsed.text))
-            order_id = self.store.upsert_order_from_draft(
-                job_id=job_id,
-                platform=platform,
-                raw_text=parsed.text,
-                draft=fallback,
-            )
+            self.last_error = _error_message(exc)
+            self.failed_count += 1
+            order_id = None
         with self._lock:
             self.received_count += 1
         return order_id
+
+    def handle_connection_bytes(self, data: bytes) -> str | None:
+        """处理一个 TCP 连接收到的 bytes，状态查询包不进入订单链路。"""
+        if is_escpos_realtime_status_request(data):
+            return None
+        return self.handle_bytes(data)
 
     def _parse_order(self, platform: str, raw_text: str):
         """优先使用 LLM 结构化解析，失败时回退到规则解析。"""
         try:
             draft = parse_order_text_with_llm(self.settings, platform, raw_text)
-            if draft is not None:
-                return normalize_order_draft(platform, raw_text, draft)
+            return normalize_order_draft(platform, raw_text, draft)
         except Exception as exc:
-            self.last_error = f"LLM 解析失败，已回退规则解析：{exc}"
-        return normalize_order_draft(platform, raw_text, parse_order_text(platform, raw_text))
+            self.last_error = _error_message(exc)
+            raise
 
     def _run(self) -> None:
         """监听 TCP 端口并按连接读取打印数据。"""
@@ -168,14 +172,27 @@ class ReceiptMonitor:
                     except socket.timeout:
                         continue
                     with client:
+                        client.settimeout(CLIENT_READ_TIMEOUT_SECONDS)
                         chunks: list[bytes] = []
                         while True:
-                            piece = client.recv(4096)
+                            try:
+                                piece = client.recv(4096)
+                            except socket.timeout:
+                                break
                             if not piece:
                                 break
                             chunks.append(piece)
-                    if chunks:
-                        self.handle_bytes(b"".join(chunks))
+                            data = b"".join(chunks)
+                            if is_escpos_realtime_status_request(data):
+                                self._reply_status_query(client, data)
+                                chunks = []
+                                break
+                        if chunks:
+                            data = b"".join(chunks)
+                            if is_escpos_realtime_status_request(data):
+                                self._reply_status_query(client, data)
+                                continue
+                            self.handle_bytes(data)
         except Exception as exc:
             self.last_error = str(exc)
             self.failed_count += 1
@@ -205,6 +222,14 @@ class ReceiptMonitor:
             self.store.update_forward_result(job_id, forwarded=False, forward_error=message)
             self.last_error = message
             self.failed_count += 1
+
+    def _reply_status_query(self, client: socket.socket, data: bytes) -> None:
+        """向 POS 返回“打印机在线”的 ESC/POS 实时状态响应。"""
+        try:
+            client.sendall(build_escpos_status_response(data))
+        except OSError:
+            # 状态查询只是兼容性辅助，客户端提前断开时不应影响主监听。
+            return
 
 
 @dataclass(slots=True)
@@ -278,3 +303,28 @@ class MultiReceiptMonitor:
             return int(self.settings.get(key, str(default)))
         except ValueError:
             return default
+
+
+def is_escpos_realtime_status_request(data: bytes) -> bool:
+    """判断 bytes 是否只包含 ESC/POS 实时状态查询指令。"""
+    if not data or len(data) % 3 != 0:
+        return False
+    for index in range(0, len(data), 3):
+        chunk = data[index : index + 3]
+        if chunk[:2] != ESC_POS_REALTIME_STATUS_PREFIX or chunk[2] not in (1, 2, 3, 4):
+            return False
+    return True
+
+
+def build_escpos_status_response(data: bytes) -> bytes:
+    """为 ESC/POS 实时状态查询生成“在线、无错误、有纸”的响应。"""
+    if not is_escpos_realtime_status_request(data):
+        return b""
+    return ESC_POS_READY_STATUS * (len(data) // 3)
+
+
+def _error_message(exc: Exception) -> str:
+    """把异常转换成监听状态里展示的可读文本。"""
+    if isinstance(exc, ReceiptVoiceError):
+        return exc.message
+    return str(exc)

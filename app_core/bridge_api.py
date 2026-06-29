@@ -9,10 +9,11 @@ from __future__ import annotations
 import os
 
 from .database import app_data_dir
-from .llm_parser import test_llm_connection
+from .errors import ReceiptVoiceError
+from .llm_parser import get_deepseek_balance, test_llm_connection
 from .monitor import MultiReceiptMonitor
 from .order_store import OrderStore
-from .printer import create_or_fix_proxy_printer, list_real_printers
+from .printer import create_or_fix_proxy_printer, get_printer_diagnostics, list_real_printers, test_printer, test_printer_gdi
 from .settings import SettingsStore
 from .speech import SpeechService
 
@@ -161,6 +162,14 @@ class BridgeApi:
         except Exception as exc:
             return self._error(exc)
 
+    def get_llm_balance(self, settings: dict | None = None) -> dict:
+        """查询 DeepSeek 账号余额。"""
+        try:
+            balance = get_deepseek_balance(self.settings, settings)
+            return self._ok({"balance": balance})
+        except Exception as exc:
+            return self._error(exc)
+
     def get_monitor_status(self) -> dict:
         """返回监听服务状态。"""
         return self._ok({"status": self.monitor.status().to_dict()})
@@ -186,6 +195,38 @@ class BridgeApi:
         try:
             os.startfile(app_data_dir())
             return self._ok({})
+        except Exception as exc:
+            return self._error(exc)
+
+    def test_printer(self, printer_name: str | None = None) -> dict:
+        """向真实小票机发送测试小票。"""
+        try:
+            target = str(printer_name or self.settings.get("target_printer_name", "")).strip()
+            result = test_printer(target)
+            return self._ok({
+                "message": f"{result.get('message', '测试任务已提交')} 打印机：{target}",
+                "job": result,
+            })
+        except Exception as exc:
+            return self._error(exc)
+
+    def test_printer_gdi(self, printer_name: str | None = None) -> dict:
+        """向真实小票机发送 Windows 普通打印测试页。"""
+        try:
+            target = str(printer_name or self.settings.get("target_printer_name", "")).strip()
+            result = test_printer_gdi(target)
+            return self._ok({
+                "message": f"{result.get('message', '普通打印测试已提交')} 打印机：{target}",
+                "job": result,
+            })
+        except Exception as exc:
+            return self._error(exc)
+
+    def get_printer_diagnostics(self, printer_name: str | None = None) -> dict:
+        """返回真实小票机的 Windows 驱动、端口和队列诊断信息。"""
+        try:
+            target = str(printer_name or self.settings.get("target_printer_name", "")).strip()
+            return self._ok({"diagnostics": get_printer_diagnostics(target)})
         except Exception as exc:
             return self._error(exc)
 
@@ -224,9 +265,21 @@ class BridgeApi:
     @staticmethod
     def _error(exc: Exception) -> dict:
         """包装异常响应。"""
-        return {"ok": False, "error": str(exc)}
+        if isinstance(exc, ReceiptVoiceError):
+            return {
+                "ok": False,
+                "code": exc.code,
+                "error": exc.message,
+                "detail": exc.detail,
+            }
+        return {
+            "ok": False,
+            "code": exc.__class__.__name__,
+            "error": str(exc),
+            "detail": "",
+        }
 
     @staticmethod
     def _error_text(message: str) -> dict:
         """包装业务错误响应。"""
-        return {"ok": False, "error": message}
+        return {"ok": False, "code": "business_error", "error": message, "detail": ""}
