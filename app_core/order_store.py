@@ -7,6 +7,7 @@ UI、监听器和 TTS 都应通过这里访问订单数据，而不是直接拼 
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 
 from .ids import make_id, now_iso
@@ -95,10 +96,9 @@ class OrderStore:
             """
             SELECT * FROM orders
             WHERE status = 'pending'
-            ORDER BY COALESCE(NULLIF(order_time, ''), created_at) DESC,
-                     created_at DESC
             """
         ).fetchall()
+        rows = self._sort_order_rows(rows, fallback_fields=("created_at",))
         return [self._row_to_order(row) for row in rows]
 
     def get_done_orders(self, limit: int = 50) -> list[Order]:
@@ -107,13 +107,9 @@ class OrderStore:
             """
             SELECT * FROM orders
             WHERE status = 'done'
-            ORDER BY COALESCE(NULLIF(order_time, ''), updated_at, created_at) DESC,
-                     updated_at DESC,
-                     created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
+            """
         ).fetchall()
+        rows = self._sort_order_rows(rows, fallback_fields=("updated_at", "created_at"))[:limit]
         return [self._row_to_order(row) for row in rows]
 
     def get_order(self, order_id: str) -> Order | None:
@@ -193,6 +189,7 @@ class OrderStore:
     ) -> None:
         """插入新订单。"""
         now = now_iso()
+        order_time = normalize_order_time(draft.order_time, now) if draft.order_time else None
         self.conn.execute(
             """
             INSERT INTO orders(
@@ -211,7 +208,7 @@ class OrderStore:
                 platform,
                 draft.platform_order_no,
                 draft.display_no,
-                draft.order_time,
+                order_time,
                 draft.order_type,
                 draft.pickup_method,
                 draft.location,
@@ -230,6 +227,8 @@ class OrderStore:
         draft: OrderDraft,
     ) -> None:
         """用重复打印的小票更新已有订单。"""
+        now = now_iso()
+        order_time = normalize_order_time(draft.order_time, now) if draft.order_time else None
         self.conn.execute(
             """
             UPDATE orders
@@ -247,10 +246,10 @@ class OrderStore:
             WHERE id = ?
             """,
             (
-                now_iso(),
+                now,
                 draft.platform_order_no,
                 draft.display_no,
-                draft.order_time,
+                order_time,
                 draft.order_type,
                 draft.pickup_method,
                 draft.location,
@@ -352,6 +351,23 @@ class OrderStore:
             for row in rows
         ]
 
+    @staticmethod
+    def _sort_order_rows(rows: list[sqlite3.Row], fallback_fields: tuple[str, ...]) -> list[sqlite3.Row]:
+        """按规范化后的业务时间倒序排列订单行。
+
+        SQLite 会把 ``2026-07-12T13:33`` 排在 ``2026-07-12 13:48`` 前面，因为它们是字符串。
+        这里先把 ``T``、缺年份、只有时分等格式统一掉，再给 UI 返回稳定的倒序队列。
+        """
+        return sorted(
+            rows,
+            key=lambda row: (
+                normalize_order_time(row["order_time"], first_row_value(row, fallback_fields)),
+                str(row["updated_at"] or ""),
+                str(row["created_at"] or ""),
+            ),
+            reverse=True,
+        )
+
     def _find_order_id(self, dedupe_key: str) -> str | None:
         """按去重键查找订单 ID。"""
         row = self.conn.execute(
@@ -372,3 +388,57 @@ class OrderStore:
             return None
         digest = hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()[:16]
         return f"raw:{digest}"
+
+
+def first_row_value(row: sqlite3.Row, fields: tuple[str, ...]) -> str:
+    """从 SQLite 行里按优先级取第一个非空字段。"""
+    for field in fields:
+        value = str(row[field] or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def normalize_order_time(value: object, fallback: object = "") -> str:
+    """把订单时间统一成 ``YYYY-MM-DD HH:MM:SS``。
+
+    Args:
+        value: 小票里的业务时间，可能是完整时间、缺年份时间或只有时分。
+        fallback: 缺少年份/日期时使用的参考时间，通常是订单创建时间。
+    """
+    fallback_text = normalize_order_time(fallback, "") if fallback else "0000-00-00 00:00:00"
+    text = str(value or "").strip()
+    if not text:
+        return fallback_text
+
+    normalized = (
+        text.replace("年", "-")
+        .replace("月", "-")
+        .replace("日", " ")
+        .replace("/", "-")
+        .replace("T", " ")
+    )
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    full_match = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", normalized)
+    if full_match:
+        return _format_time_parts(full_match.groups(default="0"))
+
+    month_day_match = re.match(r"^(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", normalized)
+    if month_day_match:
+        year = fallback_text[:4] if re.match(r"^\d{4}", fallback_text) else "0000"
+        month, day, hour, minute, second = month_day_match.groups(default="0")
+        return _format_time_parts((year, month, day, hour, minute, second))
+
+    time_match = re.match(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", normalized)
+    if time_match and re.match(r"^\d{4}-\d{2}-\d{2}", fallback_text):
+        hour, minute, second = time_match.groups(default="0")
+        return f"{fallback_text[:10]} {int(hour):02d}:{int(minute):02d}:{int(second):02d}"
+
+    return normalized or fallback_text
+
+
+def _format_time_parts(parts: tuple[str, ...]) -> str:
+    """把年月日时分秒补零成固定宽度时间字符串。"""
+    year, month, day, hour, minute, second = parts[:6]
+    return f"{int(year):04d}-{int(month):02d}-{int(day):02d} {int(hour):02d}:{int(minute):02d}:{int(second):02d}"

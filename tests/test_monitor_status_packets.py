@@ -51,6 +51,17 @@ class MonitorStatusPacketTest(unittest.TestCase):
         self.assertEqual(build_escpos_status_response(b"\x10\x04\x01\x10\x04\x04"), b"\x12\x12")
         self.assertFalse(is_escpos_realtime_status_request(b"\x1b\x40" + "真实小票".encode("gbk")))
 
+    def test_pos_printer_test_page_is_not_created_as_order(self) -> None:
+        """POS 打印机测试页会保存 print_job，但不会进入待制作订单。"""
+        monitor = ReceiptMonitor(self.settings, self.store, print_method="usb_print")
+        text = "美团打印机测试页\nReceipt Voice Proxy\n宽度：32个字符\n1列无宽"
+
+        order_id = monitor.handle_bytes(text.encode("gbk", errors="replace"))
+
+        self.assertIsNone(order_id)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM print_jobs").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0)
+
     def test_repair_deletes_legacy_status_query_orders(self) -> None:
         """旧版本误创建的状态查询伪订单会在启动修复时删除。"""
         job_id = self.store.create_print_job(

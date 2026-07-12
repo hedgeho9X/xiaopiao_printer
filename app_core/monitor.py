@@ -127,18 +127,19 @@ class ReceiptMonitor:
             raw_text=parsed.text,
         )
         self._forward(job_id, data)
-        try:
-            draft = self._parse_order(platform, parsed.text)
-            order_id = self.store.upsert_order_from_draft(
-                job_id=job_id,
-                platform=platform,
-                raw_text=parsed.text,
-                draft=draft,
-            )
-        except Exception as exc:
-            self.last_error = _error_message(exc)
-            self.failed_count += 1
-            order_id = None
+        order_id = None
+        if not is_printer_test_page(parsed.text):
+            try:
+                draft = self._parse_order(platform, parsed.text)
+                order_id = self.store.upsert_order_from_draft(
+                    job_id=job_id,
+                    platform=platform,
+                    raw_text=parsed.text,
+                    draft=draft,
+                )
+            except Exception as exc:
+                self.last_error = _error_message(exc)
+                self.failed_count += 1
         with self._lock:
             self.received_count += 1
         return order_id
@@ -321,6 +322,17 @@ def build_escpos_status_response(data: bytes) -> bytes:
     if not is_escpos_realtime_status_request(data):
         return b""
     return ESC_POS_READY_STATUS * (len(data) // 3)
+
+
+def is_printer_test_page(text: str) -> bool:
+    """判断文本是不是 POS 软件的打印机测试页。
+
+    测试页要保留 print_job 并继续转发，方便排查链路，但不能进入待制作订单队列。
+    """
+    compact = "".join(str(text or "").split())
+    if "打印机测试页" in compact:
+        return True
+    return "ReceiptVoiceProxy" in compact and "宽度" in compact and "列无宽" in compact
 
 
 def _error_message(exc: Exception) -> str:
