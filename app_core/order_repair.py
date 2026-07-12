@@ -16,6 +16,7 @@ def repair_legacy_orders(store: OrderStore) -> int:
     """修复旧版本留下的平台 unknown、重复订单和孤儿 print_jobs。"""
     repaired = 0
     repaired += _delete_status_query_noise(store)
+    repaired += _delete_printer_test_page_orders(store)
     for rows in _legacy_raw_groups(store):
         canonical = _choose_canonical_order(rows)
         for row in rows:
@@ -77,6 +78,23 @@ def _delete_status_query_noise(store: OrderStore) -> int:
         """
     ).rowcount
     return len(order_ids) + max(deleted_jobs, 0)
+
+
+def _delete_printer_test_page_orders(store: OrderStore) -> int:
+    """删除旧版本误创建的 POS 打印机测试页订单。"""
+    rows = store.conn.execute("SELECT id, raw_text FROM orders").fetchall()
+    order_ids = [str(row["id"]) for row in rows if _is_printer_test_page(str(row["raw_text"]))]
+    if not order_ids:
+        return 0
+    placeholders = ",".join("?" for _ in order_ids)
+    store.conn.execute(
+        f"UPDATE print_jobs SET order_id = NULL WHERE order_id IN ({placeholders})",
+        order_ids,
+    )
+    store.conn.execute(f"DELETE FROM order_events WHERE order_id IN ({placeholders})", order_ids)
+    store.conn.execute(f"DELETE FROM order_items WHERE order_id IN ({placeholders})", order_ids)
+    store.conn.execute(f"DELETE FROM orders WHERE id IN ({placeholders})", order_ids)
+    return len(order_ids)
 
 
 def _legacy_raw_groups(store: OrderStore) -> list[list[sqlite3.Row]]:
@@ -183,6 +201,8 @@ def _repair_orphan_print_jobs(store: OrderStore) -> int:
     for row in rows:
         platform = str(row["platform"])
         raw_text = str(row["raw_text"])
+        if _is_printer_test_page(raw_text):
+            continue
         if platform == "unknown":
             platform = _known_platform_for_order(store, "", raw_text)
         dedupe_key = store._make_dedupe_key(platform, raw_text)
@@ -217,3 +237,11 @@ def _known_platform_for_order(store: OrderStore, order_id: str, raw_text: str) -
     if row:
         return str(row["platform"])
     return detect_platform_from_text(raw_text, "unknown")
+
+
+def _is_printer_test_page(text: str) -> bool:
+    """判断文本是不是 POS 软件的打印机测试页。"""
+    compact = "".join(str(text or "").split())
+    if "打印机测试页" in compact:
+        return True
+    return "ReceiptVoiceProxy" in compact and "宽度" in compact and "列无宽" in compact

@@ -83,6 +83,29 @@ class MonitorStatusPacketTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM print_jobs").fetchone()[0], 0)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0)
 
+    def test_repair_deletes_legacy_printer_test_page_order(self) -> None:
+        """旧版本误创建的 POS 测试页订单会被启动修复删除。"""
+        text = "美团打印机测试页\nReceipt Voice Proxy\n宽度：32个字符\n1列无宽"
+        job_id = self.store.create_print_job(
+            print_method="usb_print",
+            platform="meituan",
+            raw_bytes=text.encode("gbk", errors="replace"),
+            raw_text=text,
+        )
+        self.store.upsert_order_from_draft(
+            job_id=job_id,
+            platform="meituan",
+            raw_text=text,
+            draft=OrderDraft(platform_order_no=None, display_no="未解析订单"),
+        )
+
+        repaired = repair_legacy_orders(self.store)
+
+        self.assertEqual(repaired, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM print_jobs").fetchone()[0], 1)
+        self.assertIsNone(self.conn.execute("SELECT order_id FROM print_jobs").fetchone()[0])
+
 
 if __name__ == "__main__":
     unittest.main()
