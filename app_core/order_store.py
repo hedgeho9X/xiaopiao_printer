@@ -383,7 +383,7 @@ class OrderStore:
         平台单号和平台名仍会作为业务字段保存，但不参与去重，避免 LLM 输出抖动、
         平台识别兜底或条形码误判把同一份小票拆成多张订单。
         """
-        normalized = "\n".join(line.strip() for line in raw_text.splitlines() if line.strip())
+        normalized = normalize_dedupe_text(raw_text)
         if not normalized:
             return None
         digest = hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()[:16]
@@ -397,6 +397,24 @@ def first_row_value(row: sqlite3.Row, fields: tuple[str, ...]) -> str:
         if value:
             return value
     return ""
+
+
+def normalize_dedupe_text(raw_text: str) -> str:
+    """清洗参与去重的小票原文，避免美团重打提示和空白差异造成重复订单。"""
+    lines = [
+        line
+        for line in str(raw_text or "").splitlines()
+        if not _is_meituan_history_reprint_line(line)
+    ]
+    text = "".join(lines)
+    text = re.sub(r"\s+", "", text)
+    return re.sub(r"[@!]+", "", text)
+
+
+def _is_meituan_history_reprint_line(line: str) -> bool:
+    """识别美团历史订单重打时额外插入的固定提示行。"""
+    compact = re.sub(r"\s+", "", line)
+    return "历史订单" in compact and "请勿重复备餐" in compact
 
 
 def normalize_order_time(value: object, fallback: object = "") -> str:
