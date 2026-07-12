@@ -424,7 +424,15 @@ if (-not (Get-PrinterPort -Name $PortName -ErrorAction SilentlyContinue)) {{
 
 $Existing = Get-Printer -Name $ProxyPrinterName -ErrorAction SilentlyContinue
 if ($Existing) {{
-    Set-Printer -Name $ProxyPrinterName -PortName $PortName
+    if ($Existing.DriverName -ne $DriverName) {{
+        # 已存在的代理打印机不能稳定地直接换驱动，驱动不一致时删除重建最可靠。
+        Get-PrintJob -PrinterName $ProxyPrinterName -ErrorAction SilentlyContinue |
+            Remove-PrintJob -ErrorAction SilentlyContinue
+        Remove-Printer -Name $ProxyPrinterName -ErrorAction Stop
+        Add-Printer -Name $ProxyPrinterName -DriverName $DriverName -PortName $PortName
+    }} else {{
+        Set-Printer -Name $ProxyPrinterName -PortName $PortName
+    }}
 }} else {{
     Add-Printer -Name $ProxyPrinterName -DriverName $DriverName -PortName $PortName
 }}
